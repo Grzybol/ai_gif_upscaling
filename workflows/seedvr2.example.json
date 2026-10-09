@@ -1,0 +1,44 @@
+{
+  "_readme": "This file is a template, not a working SeedVR2 graph. class_type values that start with REPLACE_ are rejected before any prompt is sent. Export your own ComfyUI API-format workflow and point config.yaml at it. See workflows/README.md. Node 4 lists the SeedVR2VideoUpscaler input names verified from numz/ComfyUI-SeedVR2_VideoUpscaler so you can rename that one class_type after comfy-info shows it is installed. Loader and saver class types are not filled in: those nodes are not part of SeedVR2 and must be copied from your export. uniform_batch_size must stay false. Do not point the image input at the alpha or source_rgba folders.",
+  "1": {
+    "class_type": "REPLACE_WITH_IMAGE_SEQUENCE_LOADER",
+    "_comment": "Load the RGB PNG directory only. Rename inputs.directory to that node's real field.",
+    "inputs": {
+      "directory": ""
+    }
+  },
+  "2": {
+    "class_type": "REPLACE_WITH_SEEDVR2_DIT_LOADER",
+    "_comment": "Verified class_type to check for: SeedVR2LoadDiTModel. Required inputs include model and device, which depend on your install, so they are left for your API export.",
+    "inputs": {}
+  },
+  "3": {
+    "class_type": "REPLACE_WITH_SEEDVR2_VAE_LOADER",
+    "_comment": "Verified class_type to check for: SeedVR2LoadVAEModel. Required inputs include model and device.",
+    "inputs": {}
+  },
+  "4": {
+    "class_type": "REPLACE_WITH_SEEDVR2_UPSCALER",
+    "_comment": "Verified class_type to check for: SeedVR2VideoUpscaler. resolution is the shortest edge in pixels, not a scale factor. batch_size on that node must be 4n+1 and at least 5 (5, 9, 13, ...). temporal_overlap is optional; this tool writes --temporal-overlap only when the live node or this workflow already has that input.",
+    "inputs": {
+      "image": ["1", 0],
+      "dit": ["2", 0],
+      "vae": ["3", 0],
+      "seed": 42,
+      "resolution": 0,
+      "max_resolution": 0,
+      "batch_size": 5,
+      "uniform_batch_size": false,
+      "temporal_overlap": 1,
+      "color_correction": "lab"
+    }
+  },
+  "5": {
+    "class_type": "REPLACE_WITH_IMAGE_SEQUENCE_SAVER",
+    "_comment": "Write PNGs whose sorted names match frame order. Rename inputs.output_path to that node's real field. Do not pad the frame count.",
+    "inputs": {
+      "images": ["4", 0],
+      "output_path": ""
+    }
+  }
+}
