@@ -449,7 +449,7 @@ def build_converter_tab() -> None:
             if event.result is not None:
                 result = event.result
                 self.result = _panel(logic.format_result(result))
-                self.files = [str(p) for p in result.files if p.is_file()]
+                self.files = [str(p) for p in result.downloads if p.is_file()]
                 self.video = str(result.browser_preview) if result.browser_preview else None
                 self.browser_note = (
                     "Browser preview only. The production files are in Output files."

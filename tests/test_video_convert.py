@@ -1,5 +1,6 @@
 import json
 import shutil
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -88,11 +89,15 @@ def test_mp4_to_transparent_webm(clip: Path, tmp_path: Path) -> None:
 def test_mp4_to_spritesheet_matches_frames(clip: Path, tmp_path: Path) -> None:
     settings = _settings(tmp_path, formats=("spritesheet",), sheet=SpritesheetSettings(padding=2))
     result = convert_video(clip, settings)
-    png, json_path = result.outputs["spritesheet"]
+    png, json_path, bundle = result.outputs["spritesheet"]
     assert (png.name, json_path.name) == (
         "red_square_spritesheet.png",
         "red_square_spritesheet.json",
     )
+    assert bundle.name == "red_square_spritesheet.zip"
+    with zipfile.ZipFile(bundle) as archive:
+        assert sorted(archive.namelist()) == [json_path.name, png.name]
+    assert result.downloads == [bundle]  # offered as one zip, not loose parts
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert data["frame_count"] == FRAMES
     assert data["frame_width"] == 64 and data["frame_height"] == 48
@@ -220,7 +225,7 @@ def test_variable_frame_durations_reach_the_spritesheet(tmp_path: Path) -> None:
         webm_pix_fmt="yuva420p",
     )  # fmt: skip
     result = convert_video(source, _settings(tmp_path, formats=("spritesheet", "webm")))
-    data = json.loads(result.outputs["spritesheet"][-1].read_text(encoding="utf-8"))
+    data = json.loads(result.outputs["spritesheet"][-2].read_text(encoding="utf-8"))
     assert [f["duration_ms"] for f in data["frames"]] == durations
     assert data["duration_ms"] == sum(durations)
     assert inspect_video(result.outputs["webm"][0]).durations_ms == durations

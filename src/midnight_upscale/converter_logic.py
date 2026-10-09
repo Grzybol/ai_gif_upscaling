@@ -461,7 +461,7 @@ def format_result(result: ConvertResult) -> str:
         "",
         "Files:",
     ]
-    for path in result.files:
+    for path in result.downloads:
         lines.append(f"  {path.name}  ({_size_text(path)})")
     if result.validation:
         lines.extend(["", "Checked:", *[f"  {line}" for line in result.validation]])

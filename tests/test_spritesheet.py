@@ -164,6 +164,7 @@ def test_output_names_are_deterministic() -> None:
     assert paths["spritesheet"] == [
         out / "woman_idle_spritesheet.png",
         out / "woman_idle_spritesheet.json",
+        out / "woman_idle_spritesheet.zip",
     ]
     assert paths["gif"] == [out / "woman_idle_preview.gif"]
     assert paths["apng"] == [out / "woman_idle_transparent.apng"]

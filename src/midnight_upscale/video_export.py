@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,7 +75,7 @@ GIF_WARNING = (
 def output_paths(
     stem: str, formats: tuple[str, ...], directory: Path, sheet_count: int = 1
 ) -> dict[str, list[Path]]:
-    """Deterministic output paths per format. The spritesheet list ends with the JSON file."""
+    """Deterministic output paths per format. The spritesheet list ends with JSON, then the zip."""
 
     paths: dict[str, list[Path]] = {}
     for fmt in formats:
@@ -88,7 +89,11 @@ def output_paths(
             paths[fmt] = [directory / f"{stem}_frames"]
         elif fmt == SPRITESHEET:
             pngs, json_name = sheet_names(stem, sheet_count)
-            paths[fmt] = [directory / name for name in pngs] + [directory / json_name]
+            zip_name = f"{stem}_spritesheet.zip"
+            paths[fmt] = [directory / n for n in pngs] + [
+                directory / json_name,
+                directory / zip_name,
+            ]
         else:
             raise PipelineError(f"Unknown output format {fmt!r}")
     return paths
@@ -124,6 +129,15 @@ def remove_outputs(paths: list[Path]) -> None:
             shutil.rmtree(path, ignore_errors=True)
         elif path.exists():
             path.unlink()
+
+
+def zip_spritesheet(files: list[Path], destination: Path) -> Path:
+    """Bundle the sheet PNGs and the JSON atlas into one download."""
+
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in files:
+            archive.write(path, arcname=path.name)
+    return destination
 
 
 def export_png_sequence(frame_paths: list[Path], directory: Path, stem: str) -> list[Path]:

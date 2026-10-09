@@ -52,6 +52,7 @@ from midnight_upscale.video_export import (
     resolve_output_stem,
     validate_spritesheet_output,
     validate_video_output,
+    zip_spritesheet,
 )
 from midnight_upscale.video_inspect import VideoInfo, inspect_video
 from midnight_upscale.video_transform import (
@@ -149,6 +150,15 @@ class ConvertResult:
         found: list[Path] = []
         for group in self.outputs.values():
             found.extend(group)
+        return found
+
+    @property
+    def downloads(self) -> list[Path]:
+        """What to offer for download: a spritesheet is one zip, not its loose parts."""
+
+        found: list[Path] = []
+        for fmt, group in self.outputs.items():
+            found.extend(group[-1:] if fmt == SPRITESHEET else group)
         return found
 
 
@@ -454,7 +464,7 @@ def _run(
             written, sheet_plan = export_spritesheet(
                 final, plan.durations_ms, out_dir, out_stem, settings.sheet
             )
-            paths[:] = written
+            paths[:] = [*written, zip_spritesheet(written, paths[-1])]
         outputs[fmt] = list(paths)
 
     browser_preview = None
@@ -494,7 +504,7 @@ def _run(
         elif fmt == SPRITESHEET and sheet_plan is not None:
             validation.extend(
                 validate_spritesheet_output(
-                    paths[:-1], paths[-1], sheet_plan, settings.sheet.max_size
+                    paths[:-2], paths[-2], sheet_plan, settings.sheet.max_size
                 )
             )
     if not transparent and resolved_mode != "none":
