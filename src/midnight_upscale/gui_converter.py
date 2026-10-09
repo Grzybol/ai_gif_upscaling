@@ -33,7 +33,7 @@ SETTING_KEYS = (
     "edge_cleanup", "hard_mask", "sample_key", "ai_backend", "ai_model", "temporal", "crop",
     "padding", "center", "resize", "resize_width", "resize_height", "keep_aspect", "formats",
     "sheet_columns", "sheet_padding", "max_texture", "power_of_two", "output_dir", "overwrite",
-    "keep_workdir",
+    "keep_workdir", "use_cache",
 )  # fmt: skip
 
 
@@ -214,6 +214,14 @@ def build_converter_tab() -> None:
                         label="Keep work directory", value=False,
                         info="Keeps the lossless PNG frames of every stage.",
                     )  # fmt: skip
+                    use_cache = gr.Checkbox(
+                        label="Reuse processed frames (cache)", value=True,
+                        info=(
+                            "After a conversion, pressing CONVERT again with only the export "
+                            "settings changed (formats, spritesheet, output folder) skips "
+                            "background removal and reuses the saved frames."
+                        ),
+                    )  # fmt: skip
 
             with gr.Row():
                 convert_button = gr.Button(
@@ -258,7 +266,7 @@ def build_converter_tab() -> None:
         start, end, fps, background_mode, key_color, tolerance, softness, spill, edge_cleanup,
         hard_mask, sample_key, ai_backend, ai_model, temporal, crop, padding, center, resize,
         resize_width, resize_height, keep_aspect, formats, sheet_columns, sheet_padding,
-        max_texture, power_of_two, output_dir, overwrite, keep_workdir,
+        max_texture, power_of_two, output_dir, overwrite, keep_workdir, use_cache,
     ]  # fmt: skip
     assert len(setting_inputs) == len(SETTING_KEYS)
     image_outputs = [original_image, mask_image, result_image, preview_note]

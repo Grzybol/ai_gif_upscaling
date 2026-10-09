@@ -170,6 +170,7 @@ def settings_from_form(
     output_dir: str,
     overwrite: bool,
     keep_workdir: bool,
+    use_cache: bool = True,
 ) -> ConvertSettings:
     selected = tuple(FORMAT_CHOICES[label] for label in (formats or []) if label in FORMAT_CHOICES)
     if not selected:
@@ -236,6 +237,7 @@ def settings_from_form(
         output_dir=Path(output_dir or "output"),
         overwrite=bool(overwrite),
         keep_workdir=bool(keep_workdir),
+        use_cache=bool(use_cache),
         browser_preview=True,
     )
 
