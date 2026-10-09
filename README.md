@@ -235,6 +235,34 @@ The decoder still accepts GIF only. PNG and animated WebP are refused with that 
 
 `wow.gif` at 2x with SeedVR2 is written to `output/wow_2x_seedvr2.webm`. A WebM job can also write `wow_2x_seedvr2.browser-preview.mp4`. That MP4 is a checkerboard composite for the browser. It is not the transparent asset.
 
+## Video converter (background removal)
+
+The GUI has a second tab, **VIDEO CONVERTER**, separate from the SeedVR2 upscaler.
+It turns an MP4, MOV, WebM or GIF (for example an ElevenLabs green-screen clip) into
+runtime-ready transparent assets. It does **not** need ComfyUI.
+
+```
+input video -> decode to PNG frames -> background removal / alpha -> temporal mask
+stabilization -> one common crop + padding -> resize -> export -> validate
+```
+
+Frames stay lossless RGBA PNG until the final write, so nothing is transcoded
+through a lossy format.
+
+- **Background removal:** Auto (keeps existing alpha, else Chroma Key for a green
+  border, else AI Segmentation; the resolved choice is always shown), None,
+  Chroma Key (soft alpha, spill suppression, edge cleanup), AI Segmentation.
+- **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an
+  explicit change; the page shows the exact output frame count first.
+- **Crop:** one bounding box over all frames, never per frame.
+- **Outputs:** `name_transparent.webm` (VP9 alpha), `name_transparent.apng`,
+  `name_preview.gif` (preview only, no soft alpha), `name_frames/`, and
+  `name_spritesheet.png` + `name_spritesheet.json` (`_00`, `_01`, ... when the frames
+  do not fit one texture of the chosen maximum size).
+- **AI removal is optional:** `pip install -e ".[bgremove]"` (rembg + onnxruntime).
+  Without it, only the AI option is unavailable. The model is chosen in the page.
+- AI segmentation shares the GPU lock with the SeedVR2 tab, so the two never run together.
+
 ## Tests
 
 Tests do not need ComfyUI or SeedVR2. The ComfyUI client is replaced with a fake that only checks batching and frame counts. Encoding tests run when `ffmpeg` is on `PATH`.

@@ -24,6 +24,10 @@ dev = [
 gui = [
     "gradio>=5.9",
 ]
+bgremove = [
+    "rembg>=2.0.57",
+    "onnxruntime>=1.17",
+]
 
 [project.scripts]
 midnight-upscale = "midnight_upscale.cli:main"
