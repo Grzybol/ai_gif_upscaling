@@ -1,0 +1,68 @@
+# Copy to config.yaml and edit.
+# seedvr2-native does not read the workflow below.
+# The numz backend (--backend seedvr2) rejects the example until you replace it.
+
+comfyui:
+  url: http://127.0.0.1:8188
+  timeout_sec: 14400
+  poll_interval_sec: 2.0
+
+seedvr2:
+  workflow: workflows/seedvr2.example.json
+  # windows: one ComfyUI prompt per batch-size group of RGB frames.
+  # all: one prompt for the whole RGB sequence. The node's batch_size input is
+  # still set from --batch-size, so SeedVR2 can chunk internally.
+  # Prefer all when VRAM allows. A seamless loop keeps more temporal context
+  # when the whole clip is one prompt.
+  chunking: windows
+  input:
+    node_id: "1"
+    field: directory
+    mode: directory
+  model:
+    # Leave node_id empty to keep the model chosen in the exported workflow.
+    node_id: ""
+    field: model
+    value: ""
+  scale:
+    node_id: "4"
+    field: resolution
+    # shortest_edge: min(width, height) * --scale, rounded up to an even pixel.
+    # This matches SeedVR2VideoUpscaler.resolution. It is not a multiplier.
+    # scale_factor writes --scale itself. target_width and target_height write
+    # the full output edge.
+    mode: shortest_edge
+  batch_size:
+    node_id: "4"
+    field: batch_size
+  # Sent only when the live node schema or the workflow already has this input.
+  # If the installed node does not expose it, the run warns and continues.
+  # Suggested: batch 5 -> overlap 1; batch 9 -> overlap 1 or 2.
+  # Keep it at most 4, and smaller than --batch-size.
+  temporal_overlap:
+    node_id: "4"
+    field: temporal_overlap
+  output:
+    node_id: "5"
+    field: output_path
+    # directory: this tool sets the field to a folder and reads the PNGs back.
+    # history: download images listed for output.node_id in the ComfyUI history.
+    mode: directory
+
+frame_upscale:
+  # Empty means the fallback only writes frame_upscale_manifest.json.
+  workflow: ""
+  input:
+    node_id: ""
+    field: image
+    mode: upload_image
+  output:
+    node_id: ""
+    field: filename_prefix
+    mode: history
+
+encode:
+  crf: 18
+  # yuva420p is the compatible VP9 alpha format. yuva444p keeps more color at
+  # hair edges and is less widely supported.
+  webm_pix_fmt: yuva420p
