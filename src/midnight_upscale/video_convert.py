@@ -449,7 +449,12 @@ def _remove_backgrounds(
     )
     guard = obs.gpu_guard() if resolved.needs_ai else contextlib.nullcontext()
     with guard:
+        if resolved.needs_ai:
+            obs.say(f"Loading AI model {resolved.ai_model} (first run downloads it)")
         remover = open_remover(resolved)
+        if resolved.needs_ai:
+            obs.say(f"Removing background from {total} frames")
+        log_every = max(1, total // 10)
         try:
             for index, path in enumerate(frames):
                 checkpoint()
@@ -465,6 +470,8 @@ def _remove_backgrounds(
                 )
                 if done % every == 0 or done == total:
                     obs.show(rgba, done, total)
+                if done % log_every == 0 and done < total:
+                    obs.say(f"Frame {done} / {total}")
         finally:
             if remover is not None:
                 remover.close()
