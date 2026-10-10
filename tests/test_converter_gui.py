@@ -43,6 +43,7 @@ def _form(**overrides) -> dict:
         "output_dir": "output",
         "overwrite": False,
         "keep_workdir": False,
+        "use_cache": True,
     }
     values.update(overrides)
     return values

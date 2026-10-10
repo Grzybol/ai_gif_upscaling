@@ -15,6 +15,8 @@ from midnight_upscale.utils import PipelineError
 
 # Alpha below this does not count as content (keeps matting noise from growing the box).
 VISIBLE_ALPHA = 8
+# Alpha at or above this counts as solid foreground when borrowing edge colors.
+SOLID_ALPHA = 250
 
 Box = tuple[int, int, int, int]  # left, top, right, bottom (right and bottom exclusive)
 
@@ -145,25 +147,38 @@ def resize_rgba(rgba: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return np.asarray(resized, dtype=np.uint8).copy()
 
 
-def fill_transparent_rgb(rgba: np.ndarray, radius: float = 4.0) -> np.ndarray:
-    """Spread nearby foreground color into fully transparent pixels.
+def fill_transparent_rgb(
+    rgba: np.ndarray, radius: float = 3.0, solid: int = SOLID_ALPHA
+) -> np.ndarray:
+    """Replace the color of every non-solid pixel with color from nearby solid pixels.
 
-    Alpha is untouched. Without this, video chroma subsampling and bilinear texture
-    filtering pull the old background color (green) into the edge of the character.
+    Alpha is untouched. A segmentation mask keeps the original RGB, so a partly
+    transparent edge pixel still carries the old (white) background: a light halo
+    on a dark page. Taking its color from the solid foreground next to it removes
+    the halo. It also stops chroma subsampling and bilinear filtering from pulling
+    background color into the edge.
     """
 
     alpha = rgba[..., 3]
-    clear = alpha == 0
-    if not clear.any():
+    loose = alpha < solid
+    if not loose.any():
         return rgba
-    weight = alpha.astype(np.float32) / 255.0
-    premult = (rgba[..., :3].astype(np.float32) * weight[..., None] + 0.5).astype(np.uint8)
-    blur = ImageFilter.GaussianBlur(radius)
-    color = np.asarray(Image.fromarray(premult).filter(blur), dtype=np.float32)
-    coverage = np.asarray(Image.fromarray(alpha).filter(blur), dtype=np.float32) / 255.0
-    usable = clear & (coverage > 0.02)
-    filled = np.clip(color / np.maximum(coverage, 0.02)[..., None], 0, 255)
+    core = (alpha >= solid).astype(np.uint8) * 255
+    if not core.any():
+        return rgba
+    color = Image.fromarray(np.ascontiguousarray(rgba[..., :3] * (core[..., None] > 0)))
+    weight = Image.fromarray(core)
+    filled = np.zeros(rgba.shape[:2] + (3,), dtype=np.float32)
+    have = np.zeros(rgba.shape[:2], dtype=bool)
+    # Near first; wider blurs only reach pixels the narrow one could not.
+    for scale in (1.0, 3.0, 9.0):
+        blur = ImageFilter.GaussianBlur(radius * scale)
+        c = np.asarray(color.filter(blur), dtype=np.float32)
+        w = np.asarray(weight.filter(blur), dtype=np.float32) / 255.0
+        usable = loose & ~have & (w > 0.02)
+        filled[usable] = np.clip(c[usable] / w[usable][:, None], 0, 255)
+        have |= usable
     out = rgba.copy()
-    out[..., :3][clear] = 0
-    out[..., :3][usable] = (filled[usable] + 0.5).astype(np.uint8)
+    out[..., :3][loose] = 0
+    out[..., :3][have] = (filled[have] + 0.5).astype(np.uint8)
     return out

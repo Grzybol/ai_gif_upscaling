@@ -1,5 +1,6 @@
 import json
 import shutil
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -88,11 +89,15 @@ def test_mp4_to_transparent_webm(clip: Path, tmp_path: Path) -> None:
 def test_mp4_to_spritesheet_matches_frames(clip: Path, tmp_path: Path) -> None:
     settings = _settings(tmp_path, formats=("spritesheet",), sheet=SpritesheetSettings(padding=2))
     result = convert_video(clip, settings)
-    png, json_path = result.outputs["spritesheet"]
+    png, json_path, bundle = result.outputs["spritesheet"]
     assert (png.name, json_path.name) == (
         "red_square_spritesheet.png",
         "red_square_spritesheet.json",
     )
+    assert bundle.name == "red_square_spritesheet.zip"
+    with zipfile.ZipFile(bundle) as archive:
+        assert sorted(archive.namelist()) == [json_path.name, png.name]
+    assert result.downloads == [bundle]  # offered as one zip, not loose parts
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert data["frame_count"] == FRAMES
     assert data["frame_width"] == 64 and data["frame_height"] == 48
@@ -220,7 +225,7 @@ def test_variable_frame_durations_reach_the_spritesheet(tmp_path: Path) -> None:
         webm_pix_fmt="yuva420p",
     )  # fmt: skip
     result = convert_video(source, _settings(tmp_path, formats=("spritesheet", "webm")))
-    data = json.loads(result.outputs["spritesheet"][-1].read_text(encoding="utf-8"))
+    data = json.loads(result.outputs["spritesheet"][-2].read_text(encoding="utf-8"))
     assert [f["duration_ms"] for f in data["frames"]] == durations
     assert data["duration_ms"] == sum(durations)
     assert inspect_video(result.outputs["webm"][0]).durations_ms == durations
@@ -331,3 +336,50 @@ def test_no_comfyui_is_needed(clip: Path, tmp_path: Path) -> None:
 
     assert "comfy" not in " ".join(sorted(vars(module)))
     assert GREEN == (0, 177, 64)
+
+
+def test_changing_only_the_outputs_reuses_cached_frames(clip: Path, tmp_path: Path) -> None:
+    first = convert_video(clip, _settings(tmp_path, formats=("webm",)))
+    assert first.outputs["webm"][0].is_file()
+    seen: list[str] = []
+    messages: list[str] = []
+    second_settings = _settings(tmp_path, formats=("spritesheet", "apng"))
+    result = _run_with_bus(
+        clip,
+        second_settings,
+        lambda e: seen.append(e.message),
+        RunObserver(log=messages.append),
+    )
+    assert any("Reusing cached" in m for m in messages)
+    assert not [m for m in seen if m.startswith("Frame ")]  # nothing was reprocessed
+    assert result.frame_count == FRAMES
+    assert {p.name for p in result.files} >= {
+        "red_square_spritesheet.png",
+        "red_square_transparent.apng",
+    }
+    assert result.background_label == first.background_label
+
+
+def test_changed_processing_settings_invalidate_the_cache(clip: Path, tmp_path: Path) -> None:
+    convert_video(clip, _settings(tmp_path, formats=("png_sequence",)))
+    messages: list[str] = []
+    changed = _settings(tmp_path, formats=("png_sequence",), crop=True)
+    result = convert_video(clip, changed, RunObserver(log=messages.append))
+    assert not any("Reusing cached" in m for m in messages)
+    assert Image.open(next(result.outputs["png_sequence"][0].glob("*.png"))).size != (64, 48)
+    messages.clear()
+    off = _settings(tmp_path, formats=("png_sequence",), crop=True, use_cache=False)
+    convert_video(clip, off, RunObserver(log=messages.append))
+    assert not any("Reusing cached" in m for m in messages)
+
+
+def test_edge_pixels_do_not_keep_the_old_background_color() -> None:
+    from midnight_upscale.video_transform import fill_transparent_rgb
+
+    rgba = np.zeros((9, 9, 4), dtype=np.uint8)
+    rgba[:, :4] = (120, 40, 30, 255)  # dark foreground
+    rgba[:, 4] = (255, 255, 255, 120)  # semi-transparent edge still carrying white
+    rgba[:, 5:, :3] = (255, 255, 255)  # transparent white background
+    fused = fill_transparent_rgb(rgba)
+    assert np.array_equal(fused[..., 3], rgba[..., 3])
+    assert fused[4, 4, 0] < 160 and fused[4, 5, 0] < 160  # edge color now comes from the body

@@ -12,10 +12,12 @@ This module never talks to ComfyUI.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import shutil
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +52,7 @@ from midnight_upscale.video_export import (
     resolve_output_stem,
     validate_spritesheet_output,
     validate_video_output,
+    zip_spritesheet,
 )
 from midnight_upscale.video_inspect import VideoInfo, inspect_video
 from midnight_upscale.video_transform import (
@@ -87,6 +90,7 @@ CONVERTER_STAGES: tuple[str, ...] = (
     STAGE_FINISHED,
 )
 
+CACHE_VERSION = 1  # bump when the processing changes
 REVIEW_SAMPLES = 12
 PREVIEW_MIN_EVERY = 3
 PREVIEW_MAX_EVERY = 10
@@ -111,6 +115,8 @@ class ConvertSettings:
     overwrite: bool = False
     keep_workdir: bool = False
     browser_preview: bool = False
+    # Reuse the processed frames when only the output settings changed.
+    use_cache: bool = True
 
 
 @dataclass
@@ -145,6 +151,103 @@ class ConvertResult:
         for group in self.outputs.values():
             found.extend(group)
         return found
+
+    @property
+    def downloads(self) -> list[Path]:
+        """What to offer for download: a spritesheet is one zip, not its loose parts."""
+
+        found: list[Path] = []
+        for fmt, group in self.outputs.items():
+            found.extend(group[-1:] if fmt == SPRITESHEET else group)
+        return found
+
+
+@dataclass
+class Processed:
+    """Frames after background removal, crop and resize, ready to export."""
+
+    final: list[Path]
+    transparent: bool
+    size: tuple[int, int]
+    label: str
+    reason: str
+    mode: str
+    review: ReviewSet | None
+
+
+def processing_fingerprint(source: Path, info: VideoInfo, settings: ConvertSettings) -> str:
+    """Hash of everything that changes the processed frames. Output formats are not in it."""
+
+    stat = source.stat()
+    parts = {
+        "version": CACHE_VERSION,
+        "source": [str(source.resolve()), stat.st_size, stat.st_mtime_ns],
+        "alpha": info.has_alpha,
+        "range": [settings.start_sec, settings.end_sec, settings.fps],
+        "background": asdict(settings.background),
+        "temporal": settings.temporal,
+        "crop": [settings.crop, settings.padding, settings.center],
+        "resize": asdict(settings.resize),
+    }
+    return hashlib.sha1(json.dumps(parts, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+class FrameCache:
+    """The last processed frames of one source, so a new output needs no reprocessing."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+
+    @property
+    def frames_dir(self) -> Path:
+        return self.directory / "final"
+
+    def load(self, fingerprint: str, frame_count: int) -> Processed | None:
+        meta_path = self.directory / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if meta.get("fingerprint") != fingerprint or meta.get("frame_count") != frame_count:
+            return None
+        frames = [frame_path(self.frames_dir, i) for i in range(frame_count)]
+        if not all(path.is_file() for path in frames):
+            return None
+        review = None
+        review_dir = Path(meta.get("review_dir") or "")
+        if meta.get("review_numbers") and review_dir.is_dir():
+            review = ReviewSet(review_dir, list(meta["review_numbers"]), frame_count)
+        return Processed(
+            final=frames,
+            transparent=bool(meta["transparent"]),
+            size=(int(meta["size"][0]), int(meta["size"][1])),
+            label=str(meta["label"]),
+            reason=str(meta["reason"]),
+            mode=str(meta["mode"]),
+            review=review,
+        )
+
+    def store(self, fingerprint: str, done: Processed) -> None:
+        """Move the final frames here and point ``done`` at them."""
+
+        if self.directory.exists():
+            shutil.rmtree(self.directory)
+        self.directory.mkdir(parents=True)
+        source_dir = done.final[0].parent
+        shutil.move(str(source_dir), str(self.frames_dir))
+        done.final = [frame_path(self.frames_dir, i) for i in range(len(done.final))]
+        meta = {
+            "fingerprint": fingerprint,
+            "frame_count": len(done.final),
+            "transparent": done.transparent,
+            "size": list(done.size),
+            "label": done.label,
+            "reason": done.reason,
+            "mode": done.mode,
+            "review_dir": str(done.review.directory) if done.review else "",
+            "review_numbers": done.review.frame_numbers if done.review else [],
+        }
+        (self.directory / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
 
 class RunObserver:
@@ -293,44 +396,38 @@ def _run(
     )
     obs.say(f"Plan: {plan.describe()}")
 
-    # 2. Decode
-    report(STAGE_DECODE, message="Decoding video", frames_done=0, frames_total=total)
-    decoded_dir = workdir / "1_decoded"
-    decode_plan(info, plan, decoded_dir, scratch=workdir / "decode_scratch")
-    decoded = [frame_path(decoded_dir, i) for i in range(total)]
-
-    # 3. Analyze
-    checkpoint()
-    report(STAGE_ANALYZE, message="Analyzing background")
-    sample_ids = sorted({0, total // 2, total - 1})
-    samples = [read_rgba(decoded[i]) for i in sample_ids]
-    resolved = resolve_background(
-        settings.background, has_alpha=info.has_alpha, sample_frames=samples
-    )
-    obs.background_label = resolved.label
-    obs.background_reason = resolved.reason
-    obs.say(f"Background mode: {resolved.label}. {resolved.reason}")
-
-    # 4. Remove background
-    keyed_dir = workdir / "2_keyed"
-    keyed_dir.mkdir()
-    _remove_backgrounds(resolved, decoded, keyed_dir, obs)
-    keyed = [frame_path(keyed_dir, i) for i in range(total)]
-
-    # 5. Stabilize
-    _stabilize(resolved, settings.temporal, keyed, obs)
-    review = _save_review(decoded, keyed, workdir.parent / "_review" / source.stem, obs)
-    if not settings.keep_workdir:
-        shutil.rmtree(decoded_dir, ignore_errors=True)
-
-    # 6. Crop / pad
-    current = keyed
-    current = _crop(current, workdir / "3_cropped", settings, obs)
-
-    # 7. Resize (also cleans the color under fully transparent pixels)
-    final, transparent = _finalize(current, workdir / "4_final", settings.resize, obs)
-    with Image.open(final[0]) as probe:
-        size = probe.size
+    # 2-7. Decode, remove background, stabilize, crop, resize. Skipped on a cache hit.
+    cache = FrameCache(settings.work_dir / "_cache" / stem)
+    fingerprint = processing_fingerprint(source, info, settings)
+    hit = cache.load(fingerprint, total) if settings.use_cache else None
+    if hit is not None:
+        done = hit
+        obs.say("Reusing cached processed frames. Only the export is repeated.")
+        for name in (
+            STAGE_DECODE,
+            STAGE_ANALYZE,
+            STAGE_REMOVE,
+            STAGE_STABILIZE,
+            STAGE_CROP,
+            STAGE_RESIZE,
+        ):
+            obs.skipped.add(name)
+            report(
+                name,
+                message="Cached",
+                frames_done=total,
+                frames_total=total,
+                frames_kind="completed",
+            )
+        obs.background_label = done.label
+        obs.background_reason = done.reason
+        obs.say(f"Background mode: {done.label}. {done.reason}")
+    else:
+        done = _process_frames(info, plan, settings, obs, workdir, source)
+        cache.store(fingerprint, done)
+    final, transparent, size = done.final, done.transparent, done.size
+    resolved_mode = done.mode
+    review = done.review
     obs.say(f"Common canvas: {size[0]}x{size[1]}")
 
     # 8. Export
@@ -367,7 +464,7 @@ def _run(
             written, sheet_plan = export_spritesheet(
                 final, plan.durations_ms, out_dir, out_stem, settings.sheet
             )
-            paths[:] = written
+            paths[:] = [*written, zip_spritesheet(written, paths[-1])]
         outputs[fmt] = list(paths)
 
     browser_preview = None
@@ -407,10 +504,10 @@ def _run(
         elif fmt == SPRITESHEET and sheet_plan is not None:
             validation.extend(
                 validate_spritesheet_output(
-                    paths[:-1], paths[-1], sheet_plan, settings.sheet.max_size
+                    paths[:-2], paths[-2], sheet_plan, settings.sheet.max_size
                 )
             )
-    if not transparent and resolved.mode != "none":
+    if not transparent and resolved_mode != "none":
         warnings.append("The result has no transparent pixels. Check the background settings.")
     for line in validation:
         obs.say(line)
@@ -423,8 +520,8 @@ def _run(
         frame_count=total,
         size=size,
         durations_ms=plan.durations_ms,
-        background_label=resolved.label,
-        background_reason=resolved.reason,
+        background_label=done.label,
+        background_reason=done.reason,
         elapsed_sec=time.monotonic() - started,
         log_path=log_path,
         review=review,
@@ -432,6 +529,64 @@ def _run(
         validation=validation,
         warnings=warnings,
         workdir=workdir if settings.keep_workdir else None,
+    )
+
+
+def _process_frames(
+    info: VideoInfo,
+    plan: FramePlan,
+    settings: ConvertSettings,
+    obs: RunObserver,
+    workdir: Path,
+    source: Path,
+) -> Processed:
+    total = plan.count
+    # 2. Decode
+    report(STAGE_DECODE, message="Decoding video", frames_done=0, frames_total=total)
+    decoded_dir = workdir / "1_decoded"
+    decode_plan(info, plan, decoded_dir, scratch=workdir / "decode_scratch")
+    decoded = [frame_path(decoded_dir, i) for i in range(total)]
+
+    # 3. Analyze
+    checkpoint()
+    report(STAGE_ANALYZE, message="Analyzing background")
+    sample_ids = sorted({0, total // 2, total - 1})
+    samples = [read_rgba(decoded[i]) for i in sample_ids]
+    resolved = resolve_background(
+        settings.background, has_alpha=info.has_alpha, sample_frames=samples
+    )
+    obs.background_label = resolved.label
+    obs.background_reason = resolved.reason
+    obs.say(f"Background mode: {resolved.label}. {resolved.reason}")
+
+    # 4. Remove background
+    keyed_dir = workdir / "2_keyed"
+    keyed_dir.mkdir()
+    _remove_backgrounds(resolved, decoded, keyed_dir, obs)
+    keyed = [frame_path(keyed_dir, i) for i in range(total)]
+
+    # 5. Stabilize
+    _stabilize(resolved, settings.temporal, keyed, obs)
+    review = _save_review(decoded, keyed, workdir.parent / "_review" / source.stem, obs)
+    if not settings.keep_workdir:
+        shutil.rmtree(decoded_dir, ignore_errors=True)
+
+    # 6. Crop / pad
+    current = keyed
+    current = _crop(current, workdir / "3_cropped", settings, obs)
+
+    # 7. Resize (also cleans the color under fully transparent pixels)
+    final, transparent = _finalize(current, workdir / "4_final", settings.resize, obs)
+    with Image.open(final[0]) as probe:
+        size = probe.size
+    return Processed(
+        final=final,
+        transparent=transparent,
+        size=size,
+        label=resolved.label,
+        reason=resolved.reason,
+        mode=resolved.mode,
+        review=review,
     )
 
 
@@ -449,7 +604,12 @@ def _remove_backgrounds(
     )
     guard = obs.gpu_guard() if resolved.needs_ai else contextlib.nullcontext()
     with guard:
+        if resolved.needs_ai:
+            obs.say(f"Loading AI model {resolved.ai_model} (first run downloads it)")
         remover = open_remover(resolved)
+        if resolved.needs_ai:
+            obs.say(f"Removing background from {total} frames")
+        log_every = max(1, total // 10)
         try:
             for index, path in enumerate(frames):
                 checkpoint()
@@ -465,6 +625,8 @@ def _remove_backgrounds(
                 )
                 if done % every == 0 or done == total:
                     obs.show(rgba, done, total)
+                if done % log_every == 0 and done < total:
+                    obs.say(f"Frame {done} / {total}")
         finally:
             if remover is not None:
                 remover.close()
