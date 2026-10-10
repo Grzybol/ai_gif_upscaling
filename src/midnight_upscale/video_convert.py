@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from zipfile import ZipFile
 
 import numpy as np
 from PIL import Image
@@ -30,6 +31,7 @@ from midnight_upscale.background import (
     remove_background,
     resolve_background,
 )
+from midnight_upscale.browser_player import make_browser_player
 from midnight_upscale.mask_temporal import get_level, smooth_masks
 from midnight_upscale.progress import JobCancelled, checkpoint, report, stamp_log
 from midnight_upscale.spritesheet import SpritesheetSettings, plan_spritesheet
@@ -90,7 +92,7 @@ CONVERTER_STAGES: tuple[str, ...] = (
     STAGE_FINISHED,
 )
 
-CACHE_VERSION = 1  # bump when the processing changes
+CACHE_VERSION = 2  # white-key processing and its edge cleanup changed
 REVIEW_SAMPLES = 12
 PREVIEW_MIN_EVERY = 3
 PREVIEW_MAX_EVERY = 10
@@ -141,6 +143,7 @@ class ConvertResult:
     log_path: Path
     review: ReviewSet | None
     browser_preview: Path | None = None
+    browser_player: Path | None = None
     validation: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     workdir: Path | None = None
@@ -479,6 +482,18 @@ def _run(
             "checkerboard",
         )
 
+    browser_player = None
+    if settings.browser_preview:
+        checkpoint()
+        browser_player = make_browser_player(
+            outputs, plan.durations_ms, out_dir, out_stem, video_preview=browser_preview
+        )
+        if browser_player.suffix == ".html":
+            created.append(browser_player)
+            if SPRITESHEET in outputs:
+                with ZipFile(outputs[SPRITESHEET][-1], "a") as bundle:
+                    bundle.write(browser_player, arcname=browser_player.name)
+
     # 9. Validate
     checkpoint()
     report(STAGE_VALIDATE, message="Validating output")
@@ -526,6 +541,7 @@ def _run(
         log_path=log_path,
         review=review,
         browser_preview=browser_preview,
+        browser_player=browser_player,
         validation=validation,
         warnings=warnings,
         workdir=workdir if settings.keep_workdir else None,

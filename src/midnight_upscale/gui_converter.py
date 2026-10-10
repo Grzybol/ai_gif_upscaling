@@ -256,6 +256,8 @@ def build_converter_tab() -> None:
                 job_log = gr.Textbox(label="Log", lines=12, max_lines=16, interactive=False)
             result_box = gr.Markdown(_panel("RESULT\n------\nNo output yet."))
             output_files = gr.File(label="Output files", file_count="multiple", interactive=False)
+            browser_button = gr.Button("Open animation in browser")
+            browser_status = gr.Markdown("")
             browser_note = gr.Markdown("")
             browser_video = gr.Video(
                 label="Browser preview — transparency shown on a checkerboard", interactive=False
@@ -279,6 +281,7 @@ def build_converter_tab() -> None:
         note = {
             "Auto": "Auto: keeps existing alpha, else Chroma Key for a green border, else AI.",
             "None": "No background removal. Frames are used as decoded.",
+            "White background": "Removes near-white pixels, including gaps between fine leaves.",
         }.get(mode, "")
         return gr.update(visible=chroma_on), gr.update(visible=ai_on), note
 
@@ -429,8 +432,9 @@ def build_converter_tab() -> None:
             self.images: tuple[object, object, object, object] = (
                 gr.update(), gr.update(), gr.update(), gr.update(),
             )  # fmt: skip
-            self.state: object = gr.update()
+            self.state: object = {}
             self.browser_note = ""
+            self.player: str | None = None
 
         def apply(self, event: logic.ConverterEvent) -> None:
             if event.panel:
@@ -450,7 +454,10 @@ def build_converter_tab() -> None:
                 result = event.result
                 self.result = _panel(logic.format_result(result))
                 self.files = [str(p) for p in result.downloads if p.is_file()]
+                if result.browser_player and result.browser_player.suffix == ".html":
+                    self.files.append(str(result.browser_player))
                 self.video = str(result.browser_preview) if result.browser_preview else None
+                self.player = str(result.browser_player) if result.browser_player else None
                 self.browser_note = (
                     "Browser preview only. The production files are in Output files."
                     if self.video
@@ -468,7 +475,9 @@ def build_converter_tab() -> None:
                     )
                     self.slider_caption = f"Frame {number + 1} / {review.total_frames}"
                     self.images = (*images, "Processed frames: scrub the slider to compare.")
-                    self.state = {"mode": "review", "review": review}
+                    self.state = {"mode": "review", "review": review, "player": self.player}
+                else:
+                    self.state = {"player": self.player}
 
         def packet(self, *, running: bool) -> tuple[object, ...]:
             return (
@@ -509,6 +518,18 @@ def build_converter_tab() -> None:
             view.result = _panel("Error\n------\n" + str(exc))
         yield view.packet(running=False)
 
+    def open_animation(state: object) -> str:
+        import webbrowser
+
+        if not isinstance(state, dict) or not state.get("player"):
+            return "Convert a video first to play the output animation."
+        path = Path(str(state["player"]))
+        if not path.is_file():
+            return "The player file is missing. Convert the video again."
+        if not webbrowser.open(path.resolve().as_uri()):
+            return "Open the player file from Output files in your browser."
+        return "Animation opened in your default browser."
+
     # ------------------------------------------------------------------ wiring
 
     background_mode.change(
@@ -537,6 +558,7 @@ def build_converter_tab() -> None:
     preview_background.change(show_frame, inputs=preview_inputs, outputs=preview_outputs)
     preview_button.click(run_preview, inputs=preview_inputs, outputs=preview_outputs)
     cancel_button.click(on_cancel, outputs=[live_caption])
+    browser_button.click(open_animation, inputs=[view_state], outputs=[browser_status])
     convert_button.click(
         on_convert,
         inputs=[uploads, *setting_inputs],
