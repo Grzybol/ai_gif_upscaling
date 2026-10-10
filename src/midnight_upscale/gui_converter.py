@@ -174,6 +174,7 @@ def build_converter_tab() -> None:
                     label="Output formats",
                     choices=list(FORMAT_CHOICES),
                     value=logic.DEFAULT_FORMATS,
+                    info="Select multiple formats. Background removal runs once for all outputs.",
                 )
                 gr.Markdown(FORMAT_HELP)
                 gif_warning = gr.Markdown(f"**GIF:** {GIF_WARNING}", visible=False)

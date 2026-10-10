@@ -219,3 +219,22 @@ def test_demo_builds_with_both_tabs() -> None:
 
     demo = build_demo()
     assert demo is not None
+
+
+def test_multiple_outputs_keep_order_without_duplicate_exports() -> None:
+    settings = logic.settings_from_form(**_form(
+        formats=["APNG", "PNG Spritesheet", "APNG", "Transparent WebM"]
+    ))
+    assert settings.formats == ("apng", "spritesheet", "webm")
+    with pytest.raises(PipelineError, match="Unknown output format"):
+        logic.settings_from_form(**_form(formats=["APNG", "Invalid format"]))
+
+
+def test_output_formats_are_multi_select_checkboxes() -> None:
+    pytest.importorskip("gradio")
+    from midnight_upscale.gui import build_demo
+
+    demo = build_demo()
+    component = next(item for item in demo.config["components"]
+                     if item.get("props", {}).get("label") == "Output formats")
+    assert component["type"] == "checkboxgroup"

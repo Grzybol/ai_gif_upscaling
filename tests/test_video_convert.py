@@ -331,3 +331,20 @@ def test_no_comfyui_is_needed(clip: Path, tmp_path: Path) -> None:
 
     assert "comfy" not in " ".join(sorted(vars(module)))
     assert GREEN == (0, 177, 64)
+
+
+def test_multiple_outputs_share_decode_and_background_pass(clip, tmp_path, monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    from midnight_upscale import video_convert
+
+    decode = Mock(wraps=video_convert.decode_plan)
+    remove = Mock(wraps=video_convert._remove_backgrounds)
+    monkeypatch.setattr(video_convert, "decode_plan", decode)
+    monkeypatch.setattr(video_convert, "_remove_backgrounds", remove)
+    settings = _settings(tmp_path, formats=("apng", "png_sequence", "spritesheet"))
+    result = convert_video(clip, settings)
+    assert set(result.outputs) == {"apng", "png_sequence", "spritesheet"}
+    assert all(path.exists() for path in result.files)
+    assert decode.call_count == 1
+    assert remove.call_count == 1

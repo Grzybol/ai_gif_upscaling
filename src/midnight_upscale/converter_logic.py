@@ -171,7 +171,9 @@ def settings_from_form(
     overwrite: bool,
     keep_workdir: bool,
 ) -> ConvertSettings:
-    selected = tuple(FORMAT_CHOICES[label] for label in (formats or []) if label in FORMAT_CHOICES)
+    if any(label not in FORMAT_CHOICES for label in (formats or [])):
+        raise PipelineError("Unknown output format.")
+    selected = tuple(dict.fromkeys(FORMAT_CHOICES[label] for label in (formats or [])))
     if not selected:
         raise PipelineError("Choose at least one output format.")
     start_sec = parse_number(start or 0, "Start time")
