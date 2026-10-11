@@ -1,6 +1,6 @@
 """Choose and apply a background-removal mode for each frame.
 
-Modes: Auto, None, Chroma Key, AI Segmentation. Auto always reports what it
+Modes: Auto, None, Chroma Key, White background, AI Segmentation. Auto reports what it
 resolved to, so the choice is never silent.
 """
 
@@ -27,12 +27,14 @@ from midnight_upscale.segmentation import (
     create_remover,
 )
 from midnight_upscale.utils import PipelineError
+from midnight_upscale.white_background import remove_white_background
 
-MODES = ("auto", "none", "chroma", "ai")
+MODES = ("auto", "none", "chroma", "white", "ai")
 MODE_LABELS = {
     "Auto": "auto",
     "None": "none",
     "Chroma Key": "chroma",
+    "White background": "white",
     "AI Segmentation": "ai",
 }
 
@@ -40,6 +42,7 @@ MODE_LABELS = {
 RESOLVED_ALPHA = "alpha"
 RESOLVED_NONE = "none"
 RESOLVED_CHROMA = "chroma"
+RESOLVED_WHITE = "white"
 RESOLVED_AI = "ai"
 
 
@@ -90,6 +93,13 @@ def resolve_background(
             chroma = _with_key(chroma, color)
             reason = f"Key color {to_hex(color)} sampled from the frame border ({coverage:.0%})."
         return ResolvedBackground(RESOLVED_CHROMA, "CHROMA KEY", reason, chroma=chroma)
+
+    if mode == "white":
+        return ResolvedBackground(
+            RESOLVED_WHITE,
+            "WHITE BACKGROUND",
+            "Near-white pixels are keyed throughout the frame, including enclosed gaps.",
+        )
 
     if mode == "ai":
         return _ai(settings, "AI SEGMENTATION", "Selected manually.")
@@ -162,6 +172,9 @@ def remove_background(
     if resolved.mode == RESOLVED_CHROMA:
         assert resolved.chroma is not None
         keyed = chroma_key(rgba[..., :3], resolved.chroma)
+    elif resolved.mode == RESOLVED_WHITE:
+        # This function multiplies the source alpha itself.
+        return remove_white_background(rgba)
     elif resolved.mode == RESOLVED_AI:
         if remover is None:
             raise PipelineError("AI segmentation needs a loaded model")

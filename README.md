@@ -251,7 +251,9 @@ through a lossy format.
 
 - **Background removal:** Auto (keeps existing alpha, else Chroma Key for a green
   border, else AI Segmentation; the resolved choice is always shown), None,
-  Chroma Key (soft alpha, spill suppression, edge cleanup), AI Segmentation.
+  Chroma Key (soft alpha, spill suppression, edge cleanup), White background,
+  AI Segmentation. White background removes near-white pixels even between leaves;
+  white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an
   explicit change; the page shows the exact output frame count first.
 - **Crop:** one bounding box over all frames, never per frame.
@@ -259,6 +261,11 @@ through a lossy format.
   `name_preview.gif` (preview only, no soft alpha), `name_frames/`, and
   `name_spritesheet.png` + `name_spritesheet.json` (`_00`, `_01`, ... when the frames
   do not fit one texture of the chosen maximum size).
+- **Playback:** after conversion, click **Open animation in browser**. Spritesheets
+  and PNG sequences get a local `name_player.html` with pause, frame scrubbing,
+  playback speed, and background color controls. The spritesheet ZIP also contains
+  this player: extract the ZIP and open the HTML beside its PNG sheets. APNG, GIF,
+  and WebM conversions open their playable output or browser preview directly.
 - **AI removal is optional:** `pip install -e ".[bgremove]"` (rembg + onnxruntime).
   Without it, only the AI option is unavailable. The model is chosen in the page.
 - AI segmentation shares the GPU lock with the SeedVR2 tab, so the two never run together.
