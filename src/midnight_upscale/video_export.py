@@ -304,13 +304,16 @@ def checkerboard(width: int, height: int, cell: int = 16) -> np.ndarray:
 
 
 def composite_on_background(rgba: np.ndarray, name: str) -> Image.Image:
-    """RGBA array to an RGB image on a checkerboard, black, or white background."""
+    """RGBA array composited on a selected inspection background."""
 
     image = Image.fromarray(np.ascontiguousarray(rgba))
-    if name == "black":
-        base = Image.new("RGBA", image.size, (0, 0, 0, 255))
-    elif name == "white":
-        base = Image.new("RGBA", image.size, (255, 255, 255, 255))
+    colors = {
+        "black": (0, 0, 0, 255), "white": (255, 255, 255, 255),
+        "gray": (96, 96, 96, 255), "magenta": (255, 0, 255, 255),
+        "green": (0, 160, 0, 255),
+    }
+    if name in colors:
+        base = Image.new("RGBA", image.size, colors[name])
     else:
         base = Image.fromarray(checkerboard(image.width, image.height))
     base.alpha_composite(image)

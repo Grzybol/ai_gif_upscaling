@@ -13,9 +13,12 @@ from PIL import Image
 
 from midnight_upscale.background import BackgroundSettings, remove_background, resolve_background
 from midnight_upscale.spritesheet import SpritesheetSettings
-from midnight_upscale.video_convert import ConvertSettings, convert_video
+from midnight_upscale.video_convert import ConvertSettings, convert_video, preview_one_frame
+from midnight_upscale.video_export import composite_on_background
+from midnight_upscale.video_inspect import inspect_video
 from midnight_upscale.white_background import (
     add_comics_outline,
+    draw_inner_border,
     force_remove_white_edges,
     remove_white_background,
     tighten_drawn_matte,
@@ -134,6 +137,37 @@ def test_tight_drawn_mode_resolves_separately() -> None:
     )
     assert resolved.mode == "drawn_white_tight"
     assert remove_background(resolved, frame)[0, 0, 3] == 0
+
+
+def test_inner_border_has_selected_color_and_stays_inside_alpha() -> None:
+    frame = np.zeros((11, 11, 4), dtype=np.uint8)
+    frame[2:9, 2:9] = (180, 120, 60, 255)
+    frame[2, 5, 3] = 128
+    result = draw_inner_border(frame, width=2, color=(10, 20, 200))
+    np.testing.assert_array_equal(result[..., 3], frame[..., 3])
+    assert tuple(result[2, 5, :3]) == (10, 20, 200)
+    assert tuple(result[3, 5, :3]) == (10, 20, 200)
+    assert tuple(result[4, 5, :3]) == (180, 120, 60)
+    assert tuple(result[1, 5]) == (0, 0, 0, 0)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_drawn_border_appears_in_preview_with_selected_background(tmp_path: Path) -> None:
+    frame = np.full((48, 48, 4), 255, dtype=np.uint8)
+    frame[10:38, 10:38, :3] = (60, 80, 100)
+    source = make_video(tmp_path / "comic.mp4", [frame, frame], fps=10)
+    settings = ConvertSettings(
+        background=BackgroundSettings(
+            mode="drawn_white", draw_border=True,
+            border_width=2, border_color=(10, 20, 200),
+        ),
+    )
+    _, mask, result, _ = preview_one_frame(inspect_video(source), settings, 0)
+    border = np.all(result[..., :3] == (10, 20, 200), axis=2) & (mask > 0)
+    assert np.any(border)
+    assert result[24, 24, 0] != 10
+    composed = np.asarray(composite_on_background(result, "magenta"))
+    assert tuple(composed[0, 0]) == (255, 0, 255)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")

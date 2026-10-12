@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 SETTING_KEYS = (
     "start", "end", "fps", "background_mode", "key_color", "tolerance", "softness", "spill",
     "edge_cleanup", "hard_mask", "sample_key", "comics_fade_strength",
-    "comics_fade_depth", "force_white_removal", "force_white_depth",
+    "comics_fade_depth", "draw_border", "border_width", "border_color",
+    "force_white_removal", "force_white_depth",
     "force_white_shade", "ai_backend", "ai_model", "temporal", "crop",
     "padding", "center", "resize", "resize_width", "resize_height", "keep_aspect", "formats",
     "sheet_columns", "sheet_padding", "max_texture", "power_of_two", "output_dir", "overwrite",
@@ -104,6 +105,28 @@ def build_converter_tab() -> None:
                         step=1, value=1,
                         info="Number of pixels inward from the recovered silhouette edge.",
                     )
+                    draw_border = gr.Checkbox(label="Draw black border", value=False)
+                    with gr.Group(visible=False) as border_group:
+                        border_width = gr.Slider(
+                            label="Inner border thickness (px)", minimum=1, maximum=16,
+                            step=1, value=1,
+                            info="Drawn inward; the exported silhouette does not grow.",
+                        )
+                        border_color = gr.ColorPicker(label="Border color", value="#000000")
+                    gr.Markdown("Preview this mode")
+                    comics_frame = gr.Slider(
+                        label="Preview frame", minimum=0, maximum=1, step=1, value=0,
+                        interactive=False,
+                    )
+                    comics_background = gr.Dropdown(
+                        label="Transparent background display",
+                        choices=logic.PREVIEW_BACKGROUNDS, value="checkerboard",
+                    )
+                    comics_preview_button = gr.Button("Preview selected frame")
+                    comics_preview_image = gr.Image(
+                        label="Comics result preview", interactive=False,
+                    )
+                    comics_preview_note = gr.Markdown("")
                 force_white_removal = gr.Checkbox(
                     label="Forced removal of white pixels", value=False,
                     info="Optional edge cleanup in every background mode.",
@@ -295,6 +318,7 @@ def build_converter_tab() -> None:
     setting_inputs = [
         start, end, fps, background_mode, key_color, tolerance, softness, spill, edge_cleanup,
         hard_mask, sample_key, comics_fade_strength, comics_fade_depth,
+        draw_border, border_width, border_color,
         force_white_removal, force_white_depth, force_white_shade,
         ai_backend, ai_model, temporal, crop, padding, center, resize,
         resize_width, resize_height, keep_aspect, formats, sheet_columns, sheet_padding,
@@ -326,6 +350,31 @@ def build_converter_tab() -> None:
 
     def on_backend(backend: str) -> str:
         return _panel(logic.ai_status_text(backend))
+
+    def update_comics_frame(uploaded: object, start_v: object, end_v: object, fps_v: object):
+        paths = coerce_upload_paths(uploaded)
+        if not paths:
+            return gr.update(interactive=False, value=0, maximum=1)
+        try:
+            plan = _plan(logic.cached_info(paths[0]), start_v, end_v, fps_v)
+        except (PipelineError, ValueError):
+            return gr.update(interactive=False, value=0, maximum=1)
+        return gr.update(
+            interactive=plan.count > 1, minimum=0, maximum=max(plan.count - 1, 1),
+            value=plan.count // 2,
+        )
+
+    def preview_comics(position: float, uploaded: object, *values: object):
+        paths = coerce_upload_paths(uploaded)
+        if not paths:
+            return None, "Choose a video first."
+        try:
+            settings = _settings(values[:-1])
+            logic.set_preview_background(str(values[-1]))
+            images, note = logic.preview_frame(paths[0], settings, int(position), run_ai=False)
+            return images[2], note
+        except (PipelineError, ValueError) as exc:
+            return None, str(exc)
 
     def on_resize(choice: str) -> tuple[object, object, object]:
         custom = choice == "Custom"
@@ -575,6 +624,10 @@ def build_converter_tab() -> None:
         on_mode, inputs=[background_mode, ai_backend],
         outputs=[chroma_group, ai_group, comics_group, mode_note],
     )
+    draw_border.change(
+        lambda enabled: gr.update(visible=enabled),
+        inputs=[draw_border], outputs=[border_group],
+    )
     force_white_removal.change(
         lambda enabled: gr.update(visible=enabled),
         inputs=[force_white_removal], outputs=[force_white_group],
@@ -590,12 +643,29 @@ def build_converter_tab() -> None:
             original_image, mask_image, result_image, preview_note, queue_box, view_state,
         ],
     )  # fmt: skip
+    uploads.change(
+        update_comics_frame, inputs=[uploads, start, end, fps], outputs=[comics_frame]
+    )
     for control in (start, end, fps):
         control.change(
             on_estimate,
             inputs=[uploads, start, end, fps],
             outputs=[estimate, frame_slider, frame_caption],
         )
+        control.change(
+            update_comics_frame, inputs=[uploads, start, end, fps], outputs=[comics_frame]
+        )
+    comics_preview_inputs = [comics_frame, uploads, *setting_inputs, comics_background]
+    comics_preview_outputs = [comics_preview_image, comics_preview_note]
+    comics_preview_button.click(
+        preview_comics, inputs=comics_preview_inputs, outputs=comics_preview_outputs
+    )
+    comics_frame.release(
+        preview_comics, inputs=comics_preview_inputs, outputs=comics_preview_outputs
+    )
+    comics_background.change(
+        preview_comics, inputs=comics_preview_inputs, outputs=comics_preview_outputs
+    )
     preview_inputs = [frame_slider, uploads, view_state, *setting_inputs, preview_background]
     preview_outputs = [frame_caption, original_image, mask_image, result_image, preview_note]
     frame_slider.release(show_frame, inputs=preview_inputs, outputs=preview_outputs)
