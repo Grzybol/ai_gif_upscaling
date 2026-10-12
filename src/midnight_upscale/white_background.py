@@ -106,6 +106,31 @@ def tighten_drawn_matte(rgba: np.ndarray) -> np.ndarray:
     return result
 
 
+def draw_inner_border(
+    rgba: np.ndarray, *, width: int, color: tuple[int, int, int]
+) -> np.ndarray:
+    """Color only pixels inside the existing alpha silhouette; never expand it."""
+
+    result = np.ascontiguousarray(rgba).copy()
+    current = result[..., 3] > 0
+    width = max(0, min(int(width), 16))
+    if width == 0 or not np.any(current):
+        return result
+    border = np.zeros(current.shape, dtype=bool)
+    for _ in range(width):
+        padded = np.pad(current, 1, mode="constant")
+        inner = np.ones(current.shape, dtype=bool)
+        for y in range(3):
+            for x in range(3):
+                inner &= padded[y : y + current.shape[0], x : x + current.shape[1]]
+        border |= current & ~inner
+        current = inner
+        if not np.any(current):
+            break
+    result[..., :3][border] = np.asarray(color, dtype=np.uint8)
+    return result
+
+
 def force_remove_white_edges(
     rgba: np.ndarray, *, depth: int, darkest_shade: int
 ) -> np.ndarray:

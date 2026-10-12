@@ -601,6 +601,11 @@ def _process_frames(
         force_white_removal=settings.background.force_white_removal,
         force_white_depth=settings.background.force_white_depth,
         force_white_shade=settings.background.force_white_shade,
+        draw_border=settings.background.draw_border and resolved.mode in {
+            "drawn_white", "drawn_white_tight"
+        },
+        border_width=settings.background.border_width,
+        border_color=settings.background.border_color,
     )
     with Image.open(final[0]) as probe:
         size = probe.size
@@ -771,6 +776,8 @@ def _finalize(
     comics_fade_strength: float = 0.0,
     comics_fade_depth: int = 1, force_white_removal: bool = False,
     force_white_depth: int = 1, force_white_shade: int = 245,
+    draw_border: bool = False, border_width: int = 1,
+    border_color: tuple[int, int, int] = (0, 0, 0),
 ) -> tuple[list[Path], bool]:
     """Resize (when asked), clean transparent-pixel color, and write the final frames."""
 
@@ -815,6 +822,10 @@ def _finalize(
             rgba = add_comics_outline(
                 rgba, fade_strength=comics_fade_strength, fade_depth=comics_fade_depth
             )
+        if draw_border:
+            from midnight_upscale.white_background import draw_inner_border
+
+            rgba = draw_inner_border(rgba, width=border_width, color=border_color)
         if np.any(rgba[..., 3] < 255):
             transparent = True
         target = frame_path(destination, index)
@@ -876,6 +887,10 @@ def preview_one_frame(
     remover = open_remover(resolved)
     try:
         result = remove_background(resolved, original, remover)
+        if settings.resize.active:
+            result = resize_rgba(
+                result, target_size(result.shape[1], result.shape[0], settings.resize)
+            )
         if settings.background.force_white_removal:
             from midnight_upscale.white_background import force_remove_white_edges
 
@@ -884,11 +899,11 @@ def preview_one_frame(
                 depth=settings.background.force_white_depth,
                 darkest_shade=settings.background.force_white_shade,
             )
+        result = fill_transparent_rgb(result)
         if resolved.mode == "drawn_white_tight":
-            from midnight_upscale.video_transform import fill_transparent_rgb
             from midnight_upscale.white_background import tighten_drawn_matte
 
-            result = tighten_drawn_matte(fill_transparent_rgb(result))
+            result = tighten_drawn_matte(result)
         if resolved.mode in {"drawn_white", "drawn_white_tight"}:
             from midnight_upscale.white_background import add_comics_outline
 
@@ -897,6 +912,13 @@ def preview_one_frame(
                 fade_strength=settings.background.comics_fade_strength,
                 fade_depth=settings.background.comics_fade_depth,
             )
+            if settings.background.draw_border:
+                from midnight_upscale.white_background import draw_inner_border
+
+                result = draw_inner_border(
+                    result, width=settings.background.border_width,
+                    color=settings.background.border_color,
+                )
     finally:
         if remover is not None:
             remover.close()

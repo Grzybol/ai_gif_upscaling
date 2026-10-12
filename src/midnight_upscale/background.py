@@ -58,6 +58,9 @@ class BackgroundSettings:
     force_white_removal: bool = False
     force_white_depth: int = 1
     force_white_shade: int = 245
+    draw_border: bool = False
+    border_width: int = 1
+    border_color: tuple[int, int, int] = (0, 0, 0)
     chroma: ChromaSettings = field(default_factory=ChromaSettings)
     # Manual Chroma Key: read the key color from the frame border instead of the picker.
     sample_key_color: bool = False

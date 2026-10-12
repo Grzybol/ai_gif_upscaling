@@ -262,6 +262,9 @@ through a lossy format.
   Drawn/comics + white background (clean edge) is a separate, stronger option
   that trims a color-contaminated outer pixel and reconstructs the new edge
   from the interior, including gold or skin-colored white spill;
+  both drawn/comics modes can optionally draw a chosen-color border 1–16 output
+  pixels inward from the silhouette. The mode panel includes a frame picker and
+  preview on checkerboard, black, white, gray, magenta, or green;
   white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an
   explicit change; the page shows the exact output frame count first.
