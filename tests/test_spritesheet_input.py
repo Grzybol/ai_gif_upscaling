@@ -11,6 +11,7 @@ from midnight_upscale.video_export import export_spritesheet, zip_spritesheet
 from midnight_upscale.video_inspect import inspect_video
 from midnight_upscale.spritesheet import SpritesheetSettings
 from midnight_upscale.utils import PipelineError
+from midnight_upscale import spritesheet_input
 
 
 def _upscale_style_zip(tmp_path: Path) -> Path:
@@ -66,4 +67,34 @@ def test_zip_without_spritesheet_metadata_reports_input_error(tmp_path: Path):
     with ZipFile(source, "w") as archive:
         archive.writestr("notes.txt", "not a spritesheet")
     with pytest.raises(PipelineError, match="JSON metadata"):
+        inspect_video(source)
+
+
+def test_gradio_upload_can_be_briefly_locked_on_windows(tmp_path: Path, monkeypatch):
+    source = _upscale_style_zip(tmp_path)
+    real_zip = spritesheet_input.ZipFile
+    attempts = 0
+
+    def locked_twice(path):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_zip(path)
+
+    monkeypatch.setattr(spritesheet_input, "ZipFile", locked_twice)
+    monkeypatch.setattr(spritesheet_input.time, "sleep", lambda _seconds: None)
+    assert inspect_video(source).frame_count == 3
+    assert attempts == 3
+
+
+def test_persistent_upload_lock_has_actionable_error(tmp_path: Path, monkeypatch):
+    source = _upscale_style_zip(tmp_path)
+
+    def always_locked(path):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(spritesheet_input, "ZipFile", always_locked)
+    monkeypatch.setattr(spritesheet_input.time, "sleep", lambda _seconds: None)
+    with pytest.raises(PipelineError, match="still locked by Windows"):
         inspect_video(source)

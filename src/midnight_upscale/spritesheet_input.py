@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
@@ -13,11 +14,26 @@ from PIL import Image, UnidentifiedImageError
 from midnight_upscale.utils import PipelineError
 
 
+def _open_zip(path: Path) -> ZipFile:
+    """Windows may briefly lock a newly uploaded file during cache/AV handling."""
+    for delay in (0.1, 0.2, 0.4, 0.8, 1.6, 3.2):
+        try:
+            return ZipFile(path)
+        except PermissionError:
+            time.sleep(delay)
+    try:
+        return ZipFile(path)
+    except PermissionError as exc:
+        raise PipelineError(
+            "The uploaded ZIP is still locked by Windows. Wait a moment and retry the preview."
+        ) from exc
+
+
 class SpritesheetArchive:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         try:
-            self.archive = ZipFile(path)
+            self.archive = _open_zip(path)
             names = self.archive.namelist()
             manifests = [name for name in names if name.lower().endswith(".json")]
             if len(manifests) != 1:
