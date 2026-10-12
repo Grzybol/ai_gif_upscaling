@@ -32,6 +32,7 @@ SETTING_KEYS = (
     "start", "end", "fps", "background_mode", "key_color", "tolerance", "softness", "spill",
     "edge_cleanup", "hard_mask", "sample_key", "comics_fade_strength",
     "comics_fade_depth", "draw_border", "border_width", "border_color",
+    "smooth_border", "border_smooth_depth",
     "force_white_removal", "force_white_depth",
     "force_white_shade", "ai_backend", "ai_model", "temporal", "crop",
     "padding", "center", "resize", "resize_width", "resize_height", "keep_aspect", "formats",
@@ -113,6 +114,14 @@ def build_converter_tab() -> None:
                             info="Drawn inward; the exported silhouette does not grow.",
                         )
                         border_color = gr.ColorPicker(label="Border color", value="#000000")
+                        smooth_border = gr.Checkbox(
+                            label="Smooth border transition", value=False,
+                            info="Blend the inner border edge into the asset color.",
+                        )
+                        border_smooth_depth = gr.Slider(
+                            label="Smoothing depth inward (px)", minimum=1, maximum=16,
+                            step=1, value=2, visible=False,
+                        )
                     gr.Markdown("Preview this mode")
                     comics_frame = gr.Slider(
                         label="Preview frame", minimum=0, maximum=1, step=1, value=0,
@@ -227,6 +236,10 @@ def build_converter_tab() -> None:
                     value=logic.DEFAULT_FORMATS,
                 )
                 gr.Markdown(FORMAT_HELP)
+                bundle_batch = gr.Checkbox(
+                    label="One ZIP for all selected videos", value=True,
+                    info="For multiple inputs, place each video's exports in its own ZIP folder.",
+                )
                 gif_warning = gr.Markdown(f"**GIF:** {GIF_WARNING}", visible=False)
                 with gr.Accordion("Spritesheet", open=False):
                     sheet_columns = gr.Dropdown(
@@ -318,7 +331,7 @@ def build_converter_tab() -> None:
     setting_inputs = [
         start, end, fps, background_mode, key_color, tolerance, softness, spill, edge_cleanup,
         hard_mask, sample_key, comics_fade_strength, comics_fade_depth,
-        draw_border, border_width, border_color,
+        draw_border, border_width, border_color, smooth_border, border_smooth_depth,
         force_white_removal, force_white_depth, force_white_shade,
         ai_backend, ai_model, temporal, crop, padding, center, resize,
         resize_width, resize_height, keep_aspect, formats, sheet_columns, sheet_padding,
@@ -538,6 +551,11 @@ def build_converter_tab() -> None:
                 del self.lines[:-300]
             if event.error:
                 self.result = _panel("Error\n------\n" + event.error)
+            if event.bundle_path is not None:
+                self.files = [str(event.bundle_path)]
+                self.result = _panel(
+                    f"RESULT\n------\nBatch ZIP ready: {event.bundle_path.name}"
+                )
             if event.result is not None:
                 result = event.result
                 self.result = _panel(logic.format_result(result))
@@ -591,14 +609,17 @@ def build_converter_tab() -> None:
             paths = coerce_upload_paths(uploaded)
             if not paths:
                 raise PipelineError("Choose a video first.")
-            settings = _settings(values)
+            settings = _settings(values[:-1])
+            bundle_batch = bool(values[-1])
         except (PipelineError, ValueError) as exc:
             view.result = _panel("Error\n------\n" + str(exc))
             yield view.packet(running=False)
             return
         yield view.packet(running=True)
         try:
-            for event in logic.iter_converter_queue(paths, settings):
+            for event in logic.iter_converter_queue(
+                paths, settings, bundle_batch=bundle_batch
+            ):
                 view.apply(event)
                 yield view.packet(running=True)
         except Exception as exc:
@@ -627,6 +648,10 @@ def build_converter_tab() -> None:
     draw_border.change(
         lambda enabled: gr.update(visible=enabled),
         inputs=[draw_border], outputs=[border_group],
+    )
+    smooth_border.change(
+        lambda enabled: gr.update(visible=enabled),
+        inputs=[smooth_border], outputs=[border_smooth_depth],
     )
     force_white_removal.change(
         lambda enabled: gr.update(visible=enabled),
@@ -675,7 +700,7 @@ def build_converter_tab() -> None:
     browser_button.click(open_animation, inputs=[view_state], outputs=[browser_status])
     convert_button.click(
         on_convert,
-        inputs=[uploads, *setting_inputs],
+        inputs=[uploads, *setting_inputs, bundle_batch],
         outputs=[
             convert_button, progress, live_caption, live_preview, job_log, result_box,
             output_files, browser_video, browser_note, queue_box, frame_slider, frame_caption,

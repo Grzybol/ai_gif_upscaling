@@ -61,6 +61,7 @@ class BackgroundSettings:
     draw_border: bool = False
     border_width: int = 1
     border_color: tuple[int, int, int] = (0, 0, 0)
+    border_smooth_depth: int = 0
     chroma: ChromaSettings = field(default_factory=ChromaSettings)
     # Manual Chroma Key: read the key color from the frame border instead of the picker.
     sample_key_color: bool = False

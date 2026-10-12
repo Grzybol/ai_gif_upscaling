@@ -107,7 +107,7 @@ def tighten_drawn_matte(rgba: np.ndarray) -> np.ndarray:
 
 
 def draw_inner_border(
-    rgba: np.ndarray, *, width: int, color: tuple[int, int, int]
+    rgba: np.ndarray, *, width: int, color: tuple[int, int, int], smooth_depth: int = 0
 ) -> np.ndarray:
     """Color only pixels inside the existing alpha silhouette; never expand it."""
 
@@ -127,7 +127,23 @@ def draw_inner_border(
         current = inner
         if not np.any(current):
             break
-    result[..., :3][border] = np.asarray(color, dtype=np.uint8)
+    color_array = np.asarray(color, dtype=np.float32)
+    result[..., :3][border] = color_array.astype(np.uint8)
+    smooth_depth = max(0, min(int(smooth_depth), 16))
+    for index in range(smooth_depth):
+        if not np.any(current):
+            break
+        padded = np.pad(current, 1, mode="constant")
+        inner = np.ones(current.shape, dtype=bool)
+        for y in range(3):
+            for x in range(3):
+                inner &= padded[y : y + current.shape[0], x : x + current.shape[1]]
+        ring = current & ~inner
+        border_weight = (smooth_depth - index) / (smooth_depth + 1)
+        original = rgba[..., :3][ring].astype(np.float32)
+        mixed = original * (1.0 - border_weight) + color_array * border_weight
+        result[..., :3][ring] = np.rint(mixed).astype(np.uint8)
+        current = inner
     return result
 
 
