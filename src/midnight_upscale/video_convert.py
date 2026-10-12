@@ -606,6 +606,7 @@ def _process_frames(
         },
         border_width=settings.background.border_width,
         border_color=settings.background.border_color,
+        border_smooth_depth=settings.background.border_smooth_depth,
     )
     with Image.open(final[0]) as probe:
         size = probe.size
@@ -778,6 +779,7 @@ def _finalize(
     force_white_depth: int = 1, force_white_shade: int = 245,
     draw_border: bool = False, border_width: int = 1,
     border_color: tuple[int, int, int] = (0, 0, 0),
+    border_smooth_depth: int = 0,
 ) -> tuple[list[Path], bool]:
     """Resize (when asked), clean transparent-pixel color, and write the final frames."""
 
@@ -825,7 +827,10 @@ def _finalize(
         if draw_border:
             from midnight_upscale.white_background import draw_inner_border
 
-            rgba = draw_inner_border(rgba, width=border_width, color=border_color)
+            rgba = draw_inner_border(
+                rgba, width=border_width, color=border_color,
+                smooth_depth=border_smooth_depth,
+            )
         if np.any(rgba[..., 3] < 255):
             transparent = True
         target = frame_path(destination, index)
@@ -918,6 +923,7 @@ def preview_one_frame(
                 result = draw_inner_border(
                     result, width=settings.background.border_width,
                     color=settings.background.border_color,
+                    smooth_depth=settings.background.border_smooth_depth,
                 )
     finally:
         if remover is not None:

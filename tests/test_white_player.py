@@ -151,6 +151,20 @@ def test_inner_border_has_selected_color_and_stays_inside_alpha() -> None:
     assert tuple(result[1, 5]) == (0, 0, 0, 0)
 
 
+def test_inner_border_smoothing_blends_from_border_to_asset() -> None:
+    frame = np.zeros((15, 15, 4), dtype=np.uint8)
+    frame[2:13, 2:13] = (200, 100, 40, 255)
+    result = draw_inner_border(
+        frame, width=2, color=(0, 0, 0), smooth_depth=2
+    )
+    assert tuple(result[2, 7, :3]) == (0, 0, 0)
+    assert tuple(result[3, 7, :3]) == (0, 0, 0)
+    assert tuple(result[4, 7, :3]) == (67, 33, 13)
+    assert tuple(result[5, 7, :3]) == (133, 67, 27)
+    assert tuple(result[6, 7, :3]) == (200, 100, 40)
+    np.testing.assert_array_equal(result[..., 3], frame[..., 3])
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
 def test_drawn_border_appears_in_preview_with_selected_background(tmp_path: Path) -> None:
     frame = np.full((48, 48, 4), 255, dtype=np.uint8)

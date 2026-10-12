@@ -20,6 +20,7 @@ import numpy as np
 from PIL import Image
 
 from midnight_upscale.background import MODE_LABELS, BackgroundSettings
+from midnight_upscale.batch_bundle import create_batch_zip
 from midnight_upscale.chroma import EDGE_CLEANUP_LEVELS, ChromaSettings, parse_hex_color
 from midnight_upscale.mask_temporal import TEMPORAL_LABELS
 from midnight_upscale.progress import (
@@ -101,6 +102,7 @@ class ConverterEvent:
     error: str = ""
     queue: list[tuple[str, str]] | None = None
     result: ConvertResult | None = None
+    bundle_path: Path | None = None
     finished: bool = False
 
 
@@ -153,6 +155,8 @@ def settings_from_form(
     draw_border: bool = False,
     border_width: int = 1,
     border_color: str = "#000000",
+    smooth_border: bool = False,
+    border_smooth_depth: int = 1,
     key_color: str,
     tolerance: float,
     softness: float,
@@ -207,6 +211,7 @@ def settings_from_form(
         draw_border=bool(draw_border),
         border_width=int(border_width),
         border_color=parse_hex_color(border_color or "#000000"),
+        border_smooth_depth=int(border_smooth_depth) if smooth_border else 0,
         chroma=chroma,
         sample_key_color=bool(sample_key),
         ai_backend=ai_backend or DEFAULT_BACKEND,
@@ -514,7 +519,9 @@ def request_cancel() -> None:
         bus.cancel_event.set()
 
 
-def iter_converter_queue(paths: list[Path], settings: ConvertSettings) -> Iterator[ConverterEvent]:
+def iter_converter_queue(
+    paths: list[Path], settings: ConvertSettings, *, bundle_batch: bool = False
+) -> Iterator[ConverterEvent]:
     """Convert files one after another. Only one converter job runs at a time."""
 
     if not paths:
@@ -534,7 +541,7 @@ def iter_converter_queue(paths: list[Path], settings: ConvertSettings) -> Iterat
 
     def worker() -> None:
         try:
-            _run_queue(paths, settings, events, observer_box)
+            _run_queue(paths, settings, events, observer_box, bundle_batch)
         except Exception as exc:
             logger.exception("Converter queue failed")
             events.put(ConverterEvent(error=str(exc)))
@@ -571,11 +578,13 @@ def _run_queue(
     settings: ConvertSettings,
     events: queue.Queue[ConverterEvent | None],
     observer_box: dict[str, RunObserver],
+    bundle_batch: bool,
 ) -> None:
     global _ACTIVE_BUS
     items = [(path.name, "WAITING") for path in paths]
     events.put(ConverterEvent(queue=list(items)))
     last_preview = {"at": 0.0}
+    completed: list[ConvertResult] = []
 
     for index, path in enumerate(paths):
         if _CANCEL_ALL.is_set():
@@ -617,6 +626,7 @@ def _run_queue(
             items[index] = (path.name, "FAILED")
             events.put(ConverterEvent(queue=list(items), error=str(exc)))
         else:
+            completed.append(result)
             items[index] = (path.name, "DONE")
             bus.mark_finished("Finished")
             events.put(
@@ -629,6 +639,16 @@ def _run_queue(
         finally:
             _ACTIVE_BUS = None
             reset_bus(token)
+    if bundle_batch and len(paths) > 1 and completed and not _CANCEL_ALL.is_set():
+        jobs = [
+            (
+                result.source,
+                [*result.downloads, *([result.browser_player] if result.browser_player else [])],
+            )
+            for result in completed
+        ]
+        bundle = create_batch_zip(jobs, settings.output_dir, overwrite=settings.overwrite)
+        events.put(ConverterEvent(bundle_path=bundle, log_line=f"Batch ZIP: {bundle}"))
     events.put(ConverterEvent(finished=True, queue=list(items)))
 
 

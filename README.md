@@ -265,6 +265,9 @@ through a lossy format.
   both drawn/comics modes can optionally draw a chosen-color border 1–16 output
   pixels inward from the silhouette. The mode panel includes a frame picker and
   preview on checkerboard, black, white, gray, magenta, or green;
+  the border can blend into the asset over a configurable number of pixels
+  measured inward from the border's inner edge. Multiple input videos can be
+  exported into one ZIP with a subdirectory for each video's output files;
   white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an
   explicit change; the page shows the exact output frame count first.
