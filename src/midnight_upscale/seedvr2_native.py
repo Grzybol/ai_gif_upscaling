@@ -20,6 +20,7 @@ import logging
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,11 @@ SUPPORT_NODES = (
     "KSampler",
     "SaveImage",
 )
-TEMPORAL_MODES = ("auto", "unchunked", "chunked")
+TEMPORAL_MODES = ("auto", "unchunked", "chunked", "windowed")
+# Independent unchunked jobs. 9 is 4n+1. Overlap 4 gives each interior frame
+# temporal context without keeping the duplicated edge frames.
+WINDOW_FRAMES = 9
+WINDOW_OVERLAP = 4
 BACKEND_NATIVE = "seedvr2-native"
 BACKEND_NUMZ = "seedvr2"
 
@@ -118,6 +123,47 @@ class NativeReport:
         return self.unet or "NOT FOUND"
 
 
+def window_plan(
+    frame_count: int,
+    *,
+    window: int = WINDOW_FRAMES,
+    overlap: int = WINDOW_OVERLAP,
+) -> list[tuple[int, int, int]]:
+    """Split a clip into overlapping windows and keep each source frame once.
+
+    Each item is ``(start, keep_start, keep_end)``. ``start`` is the first frame
+    submitted to SeedVR2. ``[keep_start, keep_end)`` is the slice written to the
+    output. Edge frames inside the overlap are context only.
+    """
+
+    if frame_count < 1:
+        raise ValidationError(f"Frame count must be at least 1, got {frame_count}")
+    if window < 1 or overlap < 0 or overlap >= window or overlap % 2 != 0:
+        raise ValidationError(
+            f"Window {window} overlap {overlap} is not a usable even-overlap plan."
+        )
+    if frame_count <= window:
+        return [(0, 0, frame_count)]
+    step = window - overlap
+    edge = overlap // 2
+    starts = [0]
+    while starts[-1] + window < frame_count:
+        starts.append(starts[-1] + step)
+    plan: list[tuple[int, int, int]] = []
+    kept = 0
+    for index, start in enumerate(starts):
+        last = index == len(starts) - 1
+        keep_end = frame_count if last else start + window - edge
+        keep_start = kept
+        if keep_end <= keep_start:
+            continue
+        plan.append((start, keep_start, keep_end))
+        kept = keep_end
+    if kept != frame_count:
+        raise ValidationError(f"Window plan kept {kept} frames for a {frame_count}-frame clip.")
+    return plan
+
+
 def padded_frame_count(count: int) -> int:
     """Frame count after SeedVR2Preprocess repeats the last frame to 4n+1."""
 
@@ -138,16 +184,18 @@ def choose_temporal_mode(
     scale: int,
     chunk_nodes: bool,
 ) -> str:
-    """Pick unchunked or chunked. Auto prefers unchunked for short clips.
+    """Pick the temporal strategy. Auto keeps a short clip in one sequence.
 
-    A short Midnight Lounge loop stays one sequence when the long edge at the
-    requested scale is at most 2048 and the clip has at most 25 frames. That
-    keeps the whole loop temporally connected on a 16 GB RTX 4060 Ti. Longer
-    clips use the native chunk and merge nodes when they are installed.
+    A short loop stays unchunked when the long edge at the requested scale is
+    at most 2048 and the clip has at most 25 frames. Longer clips use native
+    temporal chunking. That still encodes the whole clip, but the sampler
+    stays small. Windowed mode is the explicit choice that bounds each job.
     """
 
     if requested not in TEMPORAL_MODES:
-        raise PipelineError("Temporal processing must be Auto, Unchunked, or Chunked.")
+        raise PipelineError("Temporal processing must be Auto, Unchunked, Chunked, or Windowed.")
+    if requested == "windowed":
+        return "windowed"
     if requested == "unchunked":
         return "unchunked"
     if requested == "chunked":
@@ -161,7 +209,7 @@ def choose_temporal_mode(
     if frame_count <= 25 and long_edge <= 2048:
         return "unchunked"
     if not chunk_nodes:
-        return "unchunked"
+        return "windowed"
     return "chunked"
 
 
@@ -537,6 +585,8 @@ def run_seedvr2_native(
     temporal_overlap: int,
     temporal_mode: str = "auto",
     client: ComfyClient | None = None,
+    on_frame: Callable[[int, Path], None] | None = None,
+    window_frames: int = WINDOW_FRAMES,
 ) -> None:
     rgb_frames = list_indexed_frames(workdir / "rgb")
     if len(rgb_frames) != metadata.frame_count:
@@ -592,14 +642,163 @@ def run_seedvr2_native(
             logger.info("Temporal overlap: %s", overlap)
         elif mode == "chunked":
             overlap = 0
-        transport = workdir / "transport" / "rgb_transport.mp4"
-        report(
-            "Build SeedVR2 input",
-            message=f"Building transport for {metadata.frame_count} RGB frames",
-            frames_total=metadata.frame_count,
-            frames_kind="submitted",
+        if mode == "windowed":
+            _submit_windows(
+                client,
+                object_info,
+                rgb_frames,
+                workdir,
+                output_dir,
+                metadata,
+                unet,
+                vae,
+                on_frame,
+                window_frames,
+            )
+        else:
+            _submit_one_clip(
+                client,
+                object_info,
+                rgb_frames,
+                workdir,
+                output_dir,
+                metadata,
+                unet,
+                vae,
+                mode,
+                overlap,
+            )
+    finally:
+        if owns_client:
+            client.close()
+    metadata.backend = BACKEND_NATIVE
+    metadata.chunking = mode
+    metadata.seedvr2_resolution = metadata.requested_scale
+    metadata.save(workdir / "metadata.json")
+
+
+def _submit_one_clip(
+    client: ComfyClient,
+    object_info: dict[str, Any],
+    rgb_frames: list[Path],
+    workdir: Path,
+    output_dir: Path,
+    metadata: JobMetadata,
+    unet: str,
+    vae: str,
+    mode: str,
+    overlap: int,
+) -> None:
+    transport = workdir / "transport" / "rgb_transport.mp4"
+    report(
+        "Build SeedVR2 input",
+        message=f"Building transport for {metadata.frame_count} RGB frames",
+        frames_total=metadata.frame_count,
+        frames_kind="submitted",
+    )
+    encode_rgb_transport(rgb_frames, transport)
+    uploaded = client.upload_input(transport, content_type="video/mp4")
+    workflow = build_native_workflow(
+        object_info,
+        video_name=uploaded,
+        unet_name=unet,
+        vae_name=vae,
+        scale=metadata.requested_scale,
+        temporal_mode=mode,
+        temporal_overlap=overlap,
+        seed=0,
+    )
+    logger.info("SeedVR2 native model: %s", unet)
+    logger.info("SeedVR2 native VAE: %s", vae)
+    logger.info(
+        "Transport video: %s fps, lossless H.264 (crf 0). "
+        "Final timing still comes from the GIF metadata.",
+        TRANSPORT_FPS,
+    )
+    logger.info(
+        "VAE encode and decode: tiled, tile %s, overlap %s.",
+        DECODE_TILE,
+        DECODE_OVERLAP,
+    )
+    report(
+        "Build SeedVR2 input",
+        message=(
+            f"Transport video ready. {metadata.frame_count} frames submitted. "
+            f"Temporal mode: {mode}."
+        ),
+        frames_total=metadata.frame_count,
+        frames_kind="submitted",
+    )
+    bus = current_bus()
+    if bus is not None:
+        bus.set_nodes(
+            {
+                node_id: str(node.get("class_type") or "")
+                for node_id, node in workflow.items()
+                if isinstance(node, dict)
+            }
         )
-        encode_rgb_transport(rgb_frames, transport)
+    report(
+        "Queue ComfyUI job",
+        message="Queueing the SeedVR2 prompt",
+        frames_total=metadata.frame_count,
+        frames_kind="submitted",
+    )
+    history = client.run_workflow(workflow)
+    _store_rgb_result(client, history, workdir, output_dir, len(rgb_frames), staging_name="decoded")
+
+
+def _submit_windows(
+    client: ComfyClient,
+    object_info: dict[str, Any],
+    rgb_frames: list[Path],
+    workdir: Path,
+    output_dir: Path,
+    metadata: JobMetadata,
+    unet: str,
+    vae: str,
+    on_frame: Callable[[int, Path], None] | None = None,
+    window_frames: int = WINDOW_FRAMES,
+) -> None:
+    overlap = WINDOW_OVERLAP if window_frames >= 9 else 0
+    plan = window_plan(len(rgb_frames), window=window_frames, overlap=overlap)
+    logger.info(
+        "Windowed SeedVR2: %s windows of %s frames, overlap %s. Each window is unchunked.",
+        len(plan),
+        window_frames,
+        overlap,
+    )
+    logger.info("SeedVR2 native model: %s", unet)
+    logger.info("SeedVR2 native VAE: %s", vae)
+    for number, (start, keep_start, keep_end) in enumerate(plan, start=1):
+        checkpoint()
+        count = min(window_frames, len(rgb_frames) - start)
+        window_dir = workdir / "transport" / f"window_{number:03d}"
+        if window_dir.exists():
+            shutil.rmtree(window_dir)
+        window_dir.mkdir(parents=True)
+        local = [frame_path(window_dir, index) for index in range(count)]
+        for index, path in enumerate(rgb_frames[start : start + count]):
+            shutil.copyfile(path, local[index])
+        logger.info(
+            "Window %s/%s source %s-%s, keeping %s-%s",
+            number,
+            len(plan),
+            start,
+            start + count - 1,
+            keep_start,
+            keep_end - 1,
+        )
+        report(
+            "SeedVR2 processing",
+            message=f"Window {number}/{len(plan)}",
+            frames_total=len(rgb_frames),
+            frames_kind="submitted",
+            batch_index=number,
+            batch_total=len(plan),
+        )
+        transport = window_dir / "transport.mp4"
+        encode_rgb_transport(local, transport)
         uploaded = client.upload_input(transport, content_type="video/mp4")
         workflow = build_native_workflow(
             object_info,
@@ -607,30 +806,9 @@ def run_seedvr2_native(
             unet_name=unet,
             vae_name=vae,
             scale=metadata.requested_scale,
-            temporal_mode=mode,
-            temporal_overlap=overlap,
+            temporal_mode="unchunked",
+            temporal_overlap=0,
             seed=0,
-        )
-        logger.info("SeedVR2 native model: %s", unet)
-        logger.info("SeedVR2 native VAE: %s", vae)
-        logger.info(
-            "Transport video: %s fps, lossless H.264 (crf 0). "
-            "Final timing still comes from the GIF metadata.",
-            TRANSPORT_FPS,
-        )
-        logger.info(
-            "VAE encode and decode: tiled, tile %s, overlap %s.",
-            DECODE_TILE,
-            DECODE_OVERLAP,
-        )
-        report(
-            "Build SeedVR2 input",
-            message=(
-                f"Transport video ready. {metadata.frame_count} frames submitted. "
-                f"Temporal mode: {mode}."
-            ),
-            frames_total=metadata.frame_count,
-            frames_kind="submitted",
         )
         bus = current_bus()
         if bus is not None:
@@ -641,59 +819,74 @@ def run_seedvr2_native(
                     if isinstance(node, dict)
                 }
             )
-        report(
-            "Queue ComfyUI job",
-            message="Queueing the SeedVR2 prompt",
-            frames_total=metadata.frame_count,
-            frames_kind="submitted",
-        )
         history = client.run_workflow(workflow)
-        report("Retrieve SeedVR2 result", message="SeedVR2 output received")
         saved = _images_for_node(history, "14")
         if len(saved) < 1:
-            raise ComfyError("SeedVR2 native finished without SaveImage frames.")
-        staging = workdir / "transport" / "decoded"
-        if staging.exists():
-            shutil.rmtree(staging)
+            raise ComfyError(f"Window {number} finished without SaveImage frames.")
+        staging = window_dir / "decoded"
         staging.mkdir(parents=True)
         downloaded: list[Path] = []
         for index, image_info in enumerate(saved):
-            checkpoint()
             dest = staging / f"{index:06d}.png"
             client.download(image_info, dest)
             downloaded.append(dest)
-            report(
-                "Retrieve SeedVR2 result",
-                message=f"Retrieved frame {index + 1}/{len(saved)}",
-                frames_done=index + 1,
-                frames_total=len(saved),
-                frames_kind="completed",
-            )
-        kept = take_source_frames(downloaded, metadata.frame_count)
+        kept = take_source_frames(downloaded, count)
+        local_start = keep_start - start
+        for offset, source_index in enumerate(range(keep_start, keep_end)):
+            target = frame_path(output_dir, source_index)
+            _copy_rgb(kept[local_start + offset], target)
+            if on_frame is not None:
+                on_frame(source_index, target)
+
+
+def _store_rgb_result(
+    client: ComfyClient,
+    history: dict[str, Any],
+    workdir: Path,
+    output_dir: Path,
+    source_count: int,
+    *,
+    staging_name: str,
+) -> None:
+    report("Retrieve SeedVR2 result", message="SeedVR2 output received")
+    saved = _images_for_node(history, "14")
+    if len(saved) < 1:
+        raise ComfyError("SeedVR2 native finished without SaveImage frames.")
+    staging = workdir / "transport" / staging_name
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    downloaded: list[Path] = []
+    for index, image_info in enumerate(saved):
+        checkpoint()
+        dest = staging / f"{index:06d}.png"
+        client.download(image_info, dest)
+        downloaded.append(dest)
         report(
-            "Decode upscaled RGB",
-            message=f"Keeping {len(kept)} RGB frames",
-            frames_total=len(kept),
+            "Retrieve SeedVR2 result",
+            message=f"Retrieved frame {index + 1}/{len(saved)}",
+            frames_done=index + 1,
+            frames_total=len(saved),
             frames_kind="completed",
         )
-        for index, path in enumerate(kept):
-            destination = frame_path(output_dir, index)
-            _copy_rgb(path, destination)
-            report(
-                "Decode upscaled RGB",
-                message=f"RGB frame {index + 1}/{len(kept)}",
-                frames_done=index + 1,
-                frames_total=len(kept),
-                frames_kind="completed",
-                preview_path=str(destination),
-            )
-    finally:
-        if owns_client:
-            client.close()
-    metadata.backend = BACKEND_NATIVE
-    metadata.chunking = mode
-    metadata.seedvr2_resolution = metadata.requested_scale
-    metadata.save(workdir / "metadata.json")
+    kept = take_source_frames(downloaded, source_count)
+    report(
+        "Decode upscaled RGB",
+        message=f"Keeping {len(kept)} RGB frames",
+        frames_total=len(kept),
+        frames_kind="completed",
+    )
+    for index, path in enumerate(kept):
+        destination = frame_path(output_dir, index)
+        _copy_rgb(path, destination)
+        report(
+            "Decode upscaled RGB",
+            message=f"RGB frame {index + 1}/{len(kept)}",
+            frames_done=index + 1,
+            frames_total=len(kept),
+            frames_kind="completed",
+            preview_path=str(destination),
+        )
 
 
 def encode_rgb_transport(frames: list[Path], dest: Path) -> None:

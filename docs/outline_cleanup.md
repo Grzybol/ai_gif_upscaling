@@ -1,0 +1,15 @@
+# Outline Cleanup in Upscale
+
+The Upscale tab offers an optional **Outline Cleanup (transparent cartoon assets)** pass before FAST, BALANCED, or QUALITY processing. It is off by default. Select a frame and use **Preview outline cleanup on selected frame** to compare original, cleaned, a 4× nearest-neighbor edge crop, and alpha. **Preview this frame** then runs the selected upscaler on that cleaned frame.
+
+The pass analyzes only a narrow zone around the alpha silhouette. Continuous dark edge runs are protected. Sparse dark dots are replaced with neighboring asset color or tapered in alpha, tiny detached protrusions are removed, and the alpha boundary can be smoothed slightly. RGB/alpha separation in the Upscale modes remains unchanged. Interior pixels are left intact. Controls are strength (Low/Medium/High), expected contour width (1/1.5/2 px), alpha smoothing (0–1), remove edge speckles, normalize outline thickness, and protect intentional dark contours.
+
+## Real-asset verification
+
+Input: first three frames from `feet2_extra_przerywnik_transparent.webm`, cropped to a 350×340 region around the character's hair and dark outline. A local GPU run used the RTX 4060 Ti and Anime4K CUDA backend, with Medium cleanup and a 2× spritesheet export. The cleaned first frame differed at 1,564 edge pixels; an 80×80 interior region was byte-identical. Visual comparison of the hair contour showed its continuous dark line retained with slightly smoother alpha around the silhouette. The full three-frame animation completed in about 2 seconds. Reading the exported spritesheet ZIP back produced three 700×680 RGBA frames with the original 33/33/33 ms durations and alpha values spanning 0–255. The cleanup-on and cleanup-off upscaled frames differed at 11,145 pixels while a sampled dark contour pixel retained its RGB value. At normal display size the difference is subtle, so use the zoomed UI preview to judge one-pixel edges. The runtime crop and verification script remain in the ignored `work/` directory, outside the PR.
+
+The cleanup is intentionally conservative. It cannot infer whether every detached dark dot is intentional artwork, and 1.5/2 px widths adjust the edge analysis radius rather than redrawing a uniform contour. Preview each asset before a full run. Opaque MP4 frames have no alpha boundary; use Video Converter to remove the background first, then upscale the transparent WebM or spritesheet. MP4 upscale output is opaque because H.264 has no alpha channel.
+
+The same cleaned real frame also completed 2× BALANCED (Real-ESRGAN) and QUALITY (SeedVR2) previews through the running local ComfyUI backend; both returned 700×680 RGBA frames. This verifies preprocessing order for all three modes, but does not establish performance for a full 150-frame QUALITY export.
+
+FAST requires the Anime4K CLI at `tools/anime4k/ac_cli.exe`, or set `MIDNIGHT_ANIME4K_CLI` to its installed path. BALANCED requires the Anime6B Real-ESRGAN model in ComfyUI, and QUALITY requires the SeedVR2 nodes and weights described in [upscale_runtime.md](upscale_runtime.md). The full 150-frame source was not run through QUALITY in this validation.

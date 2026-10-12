@@ -7,6 +7,7 @@ read that event. Sampler steps are never reported as finished frames.
 from __future__ import annotations
 
 import json
+import logging
 import struct
 import threading
 import time
@@ -16,6 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from midnight_upscale.utils import PipelineError
+
+logger = logging.getLogger(__name__)
 
 STAGES: tuple[str, ...] = (
     "Inspect input",
@@ -35,7 +38,7 @@ STAGES: tuple[str, ...] = (
 
 _SEED_STAGE = "SeedVR2 processing"
 # A finished upscaled frame exists only after SeedVR2 has written RGB or RGBA.
-COMPLETED_PREVIEW_STAGES = frozenset({"Decode upscaled RGB", "Recombine RGBA"})
+COMPLETED_PREVIEW_STAGES = frozenset({"Decode upscaled RGB", "Recombine RGBA", "Remove background"})
 
 PREVIEW_IMAGE = 1
 PREVIEW_IMAGE_WITH_METADATA = 4
@@ -122,6 +125,7 @@ class PipelineProgressEvent:
     node_step: int | None = None
     node_steps_total: int | None = None
     elapsed_seconds: float = 0.0
+    node_elapsed_seconds: float | None = None
     last_event_age_seconds: float | None = None
     message: str = ""
     preview_bytes: bytes | None = None
@@ -161,6 +165,7 @@ class ProgressBus:
     node_type: str = ""
     node_step: int | None = None
     node_steps_total: int | None = None
+    node_entered_at: float | None = None
     nodes_done: int = 0
     node_order: list[str] = field(default_factory=list)
     node_types: dict[str, str] = field(default_factory=dict)
@@ -175,6 +180,9 @@ class ProgressBus:
     gpu_name: str = ""
     vram_used_mb: float | None = None
     vram_total_mb: float | None = None
+    _gpu_util: float | None = None
+    _memory_saturated: bool = False
+    _gpu_idle: bool = False
     ws_alive: bool = False
     reconnects: int = 0
     health: str = ""
@@ -281,13 +289,18 @@ class ProgressBus:
                 self.health = (
                     "The prompt left the queue and history has no success or error for it."
                 )
+            elif quiet and queue_state == "RUNNING" and self._memory_saturated and self._gpu_idle:
+                self.status = "POSSIBLE STALL / MEMORY THRASH"
+                self.health = (
+                    f"No progress event for {_clock(age)}. "
+                    "GPU utilization is near zero and VRAM is full. "
+                    "The prompt is still in the running queue. It was not killed."
+                )
             elif quiet and queue_state == "RUNNING":
                 self.status = "ACTIVE — no recent progress event"
                 alive = "alive" if ws_alive else "reconnecting"
                 self.health = (
-                    f"No progress event for {age:.0f} seconds. "
-                    f"ComfyUI connection is {alive}. "
-                    "Job is still present in the running queue."
+                    f"ComfyUI connection is {alive}. Job is still present in the running queue."
                 )
             elif not ws_alive and self.prompt_id:
                 self.health = (
@@ -297,6 +310,18 @@ class ProgressBus:
                 self.status = "ACTIVE"
                 self.health = ""
         self._publish("")
+
+    def note_machine(
+        self,
+        *,
+        gpu_util: float | None = None,
+        memory_saturated: bool = False,
+        gpu_idle: bool = False,
+    ) -> None:
+        with self._lock:
+            self._gpu_util = gpu_util
+            self._memory_saturated = memory_saturated
+            self._gpu_idle = gpu_idle
 
     def note_gpu(self, name: str, used_mb: float | None, total_mb: float | None) -> None:
         with self._lock:
@@ -367,6 +392,9 @@ class ProgressBus:
                 node_step=self.node_step,
                 node_steps_total=self.node_steps_total,
                 elapsed_seconds=max(0.0, now - self.started),
+                node_elapsed_seconds=(
+                    None if self.node_entered_at is None else max(0.0, now - self.node_entered_at)
+                ),
                 last_event_age_seconds=age,
                 message=self.message,
                 preview_bytes=self.preview_bytes,
@@ -403,7 +431,11 @@ class ProgressBus:
         message = ""
         with self._lock:
             self.last_comfy_at = time.monotonic()
-            if self.status in {"ACTIVE — no recent progress event", "WAITING", "UNKNOWN"}:
+            if self.status.startswith("ACTIVE —") or self.status in {
+                "WAITING",
+                "UNKNOWN",
+                "POSSIBLE STALL / MEMORY THRASH",
+            }:
                 self.status = "ACTIVE"
                 self.health = ""
             if event == "execution_start":
@@ -415,8 +447,13 @@ class ProgressBus:
             elif event == "executing":
                 node = data.get("node")
                 if node:
+                    new_id = str(node)
+                    entered = new_id != self.node_id
+                    if entered:
+                        self._exit_node_locked()
+                        self.node_entered_at = time.monotonic()
                     self.stage = _SEED_STAGE
-                    self.node_id = str(node)
+                    self.node_id = new_id
                     self.node_type = self.node_types.get(self.node_id, "")
                     self.node_step = None
                     self.node_steps_total = None
@@ -424,6 +461,8 @@ class ProgressBus:
                         self.nodes_done = self.node_order.index(self.node_id)
                     label = self.node_type or self.node_id
                     message = f"Executing {label}"
+                    if entered:
+                        logger.info("[%s] ENTER %s", time.strftime("%H:%M:%S"), label)
             elif event == "progress":
                 value = _as_int(data.get("value"))
                 maximum = _as_int(data.get("max"))
@@ -446,9 +485,11 @@ class ProgressBus:
                 if node and node in self.node_order:
                     self.nodes_done = self.node_order.index(node) + 1
             elif event == "execution_success":
+                self._exit_node_locked()
                 self.queue_state = ""
                 message = "ComfyUI prompt finished"
             elif event == "execution_error":
+                self._exit_node_locked()
                 self.status = "FAILED"
                 self.error_node = str(data.get("node_id") or data.get("node") or "")
                 self.error_type = str(data.get("node_type") or data.get("exception_type") or "")
@@ -458,6 +499,7 @@ class ProgressBus:
                 self.comfy_failed = self.error_message
                 message = self.error_message
             elif event == "execution_interrupted":
+                self._exit_node_locked()
                 self.status = "CANCELLED"
                 self.error_node = str(data.get("node_id") or "")
                 self.error_type = str(data.get("node_type") or "")
@@ -466,6 +508,14 @@ class ProgressBus:
             if message:
                 self.message = message
         self._publish(message)
+
+    def _exit_node_locked(self) -> None:
+        if not self.node_id or self.node_entered_at is None:
+            return
+        label = self.node_type or self.node_id
+        elapsed = max(0.0, time.monotonic() - self.node_entered_at)
+        logger.info("[%s] EXIT %s — %s", time.strftime("%H:%M:%S"), label, _clock(elapsed))
+        self.node_entered_at = None
 
     def _apply_progress_state_locked(self, data: dict[str, Any]) -> str:
         nodes = data.get("nodes")
@@ -582,6 +632,8 @@ def format_status(event: PipelineProgressEvent) -> str:
     node = event.comfy_node_type or event.comfy_node_id
     if node:
         lines.extend(["", "Current node:", node])
+        if event.node_elapsed_seconds is not None:
+            lines.extend(["", "Node elapsed:", _clock(event.node_elapsed_seconds)])
         if event.node_step is not None and event.node_steps_total:
             lines.extend(
                 [
