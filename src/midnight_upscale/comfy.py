@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import threading
 import time
 import uuid
@@ -28,6 +29,33 @@ from midnight_upscale.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _nvidia_gpu_util() -> float | None:
+    try:
+        completed = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    line = completed.stdout.strip().splitlines()
+    if not line:
+        return None
+    try:
+        return float(line[0].strip())
+    except ValueError:
+        return None
+
 
 PLACEHOLDER_PREFIX = "REPLACE_"
 
@@ -426,6 +454,7 @@ class ComfyClient:
         self.client_id = str(uuid.uuid4())
         self.ws_alive = False
         self._progress_bus: Any = None
+        self.external_cancel: threading.Event | None = None
         self._ws_stop = threading.Event()
         self._ws_thread: threading.Thread | None = None
         self._client = httpx.Client(
@@ -608,9 +637,12 @@ class ComfyClient:
         last_health = 0.0
         while True:
             bus = current_bus()
-            if bus is not None and bus.cancel_requested():
+            if (bus is not None and bus.cancel_requested()) or (
+                self.external_cancel is not None and self.external_cancel.is_set()
+            ):
                 self._cancel_prompt(prompt_id)
-                bus.mark_cancelled(f"Cancelled ComfyUI prompt {prompt_id[:8]}.")
+                if bus is not None:
+                    bus.mark_cancelled(f"Cancelled ComfyUI prompt {prompt_id[:8]}.")
                 raise JobCancelled(
                     f"Cancelled ComfyUI prompt {prompt_id}. Partial output was not finalized."
                 )
@@ -626,12 +658,7 @@ class ComfyClient:
             try:
                 response = self._client.request("GET", f"/history/{prompt_id}")
             except httpx.ReadTimeout:
-                if time.monotonic() > deadline:
-                    raise ComfyError(
-                        f"Timed out after {self.timeout_sec:.0f}s "
-                        f"waiting for ComfyUI prompt {prompt_id}. "
-                        "The prompt was not treated as successful and no frames were invented."
-                    )
+                deadline = self._deadline_while_running(prompt_id, deadline)
                 logger.info(
                     "ComfyUI is still inside a running node, so the history poll timed out. "
                     "Waiting continues for prompt %s.",
@@ -654,16 +681,47 @@ class ComfyClient:
                     if bus is not None and bus.cancel_requested():
                         continue
                     return entry
-            if time.monotonic() > deadline:
-                waited = (
-                    f"Timed out after {self.timeout_sec:.0f}s "
-                    f"waiting for ComfyUI prompt {prompt_id}."
-                )
-                raise ComfyError(
-                    waited
-                    + " The prompt was not treated as successful and no frames were invented."
-                )
+            deadline = self._deadline_while_running(prompt_id, deadline)
             self._pause_for_cancel(bus)
+
+    def _deadline_while_running(self, prompt_id: str, deadline: float) -> float:
+        """Enforce a wall-clock deadline even when a ComfyUI node never returns."""
+
+        if time.monotonic() <= deadline:
+            return deadline
+        if self._prompt_is_running(prompt_id):
+            self.cancel_tracked(prompt_id)
+            raise ComfyError(
+                f"ComfyUI prompt {prompt_id} exceeded the {self.timeout_sec:.0f}s limit. "
+                "The running prompt was cancelled; try a smaller chunk or the ESRGAN fallback."
+            )
+        raise ComfyError(
+            f"Timed out after {self.timeout_sec:.0f}s "
+            f"waiting for ComfyUI prompt {prompt_id}. "
+            "The prompt is not in the running queue and was not treated as successful. "
+            "No frames were invented."
+        )
+
+    def _memory_pressure(self) -> tuple[float | None, bool, bool]:
+        saturated = False
+        try:
+            device = (self.system_stats().get("devices") or [None])[0]
+        except ComfyError:
+            device = None
+        if isinstance(device, dict):
+            total = device.get("vram_total")
+            free = device.get("vram_free")
+            if isinstance(total, (int, float)) and isinstance(free, (int, float)) and total > 0:
+                saturated = (float(total) - float(free)) / float(total) >= 0.90
+        util = _nvidia_gpu_util()
+        idle = util is not None and util < 5.0
+        return util, saturated, idle
+
+    def _prompt_is_running(self, prompt_id: str) -> bool:
+        try:
+            return self.prompt_queue_state(prompt_id) == "RUNNING"
+        except ComfyError:
+            return False
 
     def _pause_for_cancel(self, bus: Any) -> None:
         if bus is not None:
@@ -679,6 +737,8 @@ class ComfyClient:
         history_present = False
         if state == "UNKNOWN":
             history_present = self._history_has_prompt(prompt_id)
+        util, saturated, idle = self._memory_pressure()
+        bus.note_machine(gpu_util=util, memory_saturated=saturated, gpu_idle=idle)
         bus.note_queue(state, ws_alive=self.ws_alive, history_present=history_present)
         try:
             name, used, total = self.gpu_sample()

@@ -303,14 +303,18 @@ def build_upscale_demo() -> gr.Blocks:
 
 
 def build_demo() -> gr.Blocks:
-    """Two tabs: the SeedVR2 upscaler (needs ComfyUI) and the video converter (does not)."""
+    """Upscale modes and the existing video converter."""
 
     if gr is None:
         raise PipelineError('Gradio is not installed. Install it with: pip install -e ".[gui]"')
     from midnight_upscale.gui_converter import build_converter_demo
+    from midnight_upscale.gui_upscale import mount_upscale_tab
+
+    with gr.Blocks(title="Midnight Upscale") as upscale:
+        mount_upscale_tab()
 
     return gr.TabbedInterface(
-        [build_upscale_demo(), build_converter_demo()],
+        [upscale, build_converter_demo()],
         ["UPSCALE", "VIDEO CONVERTER"],
         title="Midnight Upscale",
     )
