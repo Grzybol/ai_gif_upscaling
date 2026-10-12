@@ -597,6 +597,9 @@ def _process_frames(
         comics_outline=resolved.mode == "drawn_white",
         comics_fade_strength=settings.background.comics_fade_strength,
         comics_fade_depth=settings.background.comics_fade_depth,
+        force_white_removal=settings.background.force_white_removal,
+        force_white_depth=settings.background.force_white_depth,
+        force_white_shade=settings.background.force_white_shade,
     )
     with Image.open(final[0]) as probe:
         size = probe.size
@@ -764,7 +767,8 @@ def _crop(
 def _finalize(
     frames: list[Path], destination: Path, resize: ResizeSettings, obs: RunObserver,
     *, comics_outline: bool = False, comics_fade_strength: float = 0.0,
-    comics_fade_depth: int = 1,
+    comics_fade_depth: int = 1, force_white_removal: bool = False,
+    force_white_depth: int = 1, force_white_shade: int = 245,
 ) -> tuple[list[Path], bool]:
     """Resize (when asked), clean transparent-pixel color, and write the final frames."""
 
@@ -792,6 +796,12 @@ def _finalize(
         rgba = read_rgba(path)
         if resize.active:
             rgba = resize_rgba(rgba, size)
+        if force_white_removal:
+            from midnight_upscale.white_background import force_remove_white_edges
+
+            rgba = force_remove_white_edges(
+                rgba, depth=force_white_depth, darkest_shade=force_white_shade
+            )
         rgba = fill_transparent_rgb(rgba)
         if comics_outline:
             from midnight_upscale.white_background import add_comics_outline
@@ -860,6 +870,14 @@ def preview_one_frame(
     remover = open_remover(resolved)
     try:
         result = remove_background(resolved, original, remover)
+        if settings.background.force_white_removal:
+            from midnight_upscale.white_background import force_remove_white_edges
+
+            result = force_remove_white_edges(
+                result,
+                depth=settings.background.force_white_depth,
+                darkest_shade=settings.background.force_white_shade,
+            )
         if resolved.mode == "drawn_white":
             from midnight_upscale.white_background import add_comics_outline
 

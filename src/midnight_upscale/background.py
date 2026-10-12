@@ -53,6 +53,9 @@ class BackgroundSettings:
     mode: str = "auto"
     comics_fade_strength: float = 0.0
     comics_fade_depth: int = 1
+    force_white_removal: bool = False
+    force_white_depth: int = 1
+    force_white_shade: int = 245
     chroma: ChromaSettings = field(default_factory=ChromaSettings)
     # Manual Chroma Key: read the key color from the frame border instead of the picker.
     sample_key_color: bool = False

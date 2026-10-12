@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import deque
+
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -62,6 +64,69 @@ def add_comics_outline(
         result[..., 3] = np.rint(alpha_float).astype(np.uint8)
     result[~silhouette, :3] = 0
     return result
+
+
+def force_remove_white_edges(
+    rgba: np.ndarray, *, depth: int, darkest_shade: int
+) -> np.ndarray:
+    """Make near-white edge pixels transparent without touching interior whites.
+
+    An opaque source may still have a white canvas (the None mode). In that case,
+    peel only border-connected white first to establish an asset silhouette.
+    """
+
+    result = np.ascontiguousarray(rgba).copy()
+    depth = max(0, min(int(depth), 16))
+    if depth == 0:
+        return result
+    cutoff = max(0, min(int(darkest_shade), 255))
+    candidate = np.all(result[..., :3] >= cutoff, axis=2)
+    alpha = result[..., 3]
+    if np.all(alpha == 255) and np.any(candidate):
+        border_white = _border_connected(candidate)
+        alpha[border_white] = 0
+    current = alpha > 0
+    for _ in range(depth):
+        if not np.any(current):
+            break
+        inner = np.asarray(
+            Image.fromarray(current.astype(np.uint8) * 255).filter(ImageFilter.MinFilter(3))
+        ) > 0
+        alpha[(current & ~inner) & candidate] = 0
+        current = inner
+    result[alpha == 0, :3] = 0
+    return result
+
+
+def _border_connected(candidate: np.ndarray) -> np.ndarray:
+    """Four-connected white canvas, seeded only at the image border."""
+
+    height, width = candidate.shape
+    visited = np.zeros((height, width), dtype=np.uint8)
+    queue: deque[tuple[int, int]] = deque()
+
+    def enqueue(y: int, x: int) -> None:
+        if not visited[y, x] and candidate[y, x]:
+            visited[y, x] = 1
+            queue.append((y, x))
+
+    for x in range(width):
+        enqueue(0, x)
+        enqueue(height - 1, x)
+    for y in range(height):
+        enqueue(y, 0)
+        enqueue(y, width - 1)
+    while queue:
+        y, x = queue.popleft()
+        if y > 0:
+            enqueue(y - 1, x)
+        if y + 1 < height:
+            enqueue(y + 1, x)
+        if x > 0:
+            enqueue(y, x - 1)
+        if x + 1 < width:
+            enqueue(y, x + 1)
+    return visited.astype(bool)
 
 
 def _box_blur(values: np.ndarray, radius: int) -> np.ndarray:

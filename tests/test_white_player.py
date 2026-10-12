@@ -14,7 +14,11 @@ from PIL import Image
 from midnight_upscale.background import BackgroundSettings, remove_background, resolve_background
 from midnight_upscale.spritesheet import SpritesheetSettings
 from midnight_upscale.video_convert import ConvertSettings, convert_video
-from midnight_upscale.white_background import add_comics_outline, remove_white_background
+from midnight_upscale.white_background import (
+    add_comics_outline,
+    force_remove_white_edges,
+    remove_white_background,
+)
 from tests.video_fixtures import make_video
 
 
@@ -81,6 +85,31 @@ def test_comics_gradient_fades_alpha_inward_by_depth() -> None:
     assert result[5, 5, 3] == 255
     assert result[2, 5, 0] == 60
     assert result[3, 5, 0] == 120
+
+
+def test_forced_white_removal_respects_depth_shade_and_interior() -> None:
+    frame = np.zeros((11, 11, 4), dtype=np.uint8)
+    frame[1:10, 1:10] = (80, 40, 20, 255)
+    frame[1, 5, :3] = (250, 250, 250)
+    frame[2, 5, :3] = (230, 230, 230)
+    frame[3, 5, :3] = (250, 250, 250)
+    shallow = force_remove_white_edges(frame, depth=1, darkest_shade=245)
+    assert shallow[1, 5, 3] == 0
+    assert shallow[2, 5, 3] == 255
+    assert shallow[3, 5, 3] == 255
+    deeper = force_remove_white_edges(frame, depth=2, darkest_shade=225)
+    assert deeper[1, 5, 3] == deeper[2, 5, 3] == 0
+    assert deeper[3, 5, 3] == 255
+
+
+def test_forced_white_removal_keys_border_canvas_in_none_mode() -> None:
+    frame = np.full((9, 9, 4), 255, dtype=np.uint8)
+    frame[2:7, 2:7, :3] = (30, 60, 90)
+    frame[4, 4, :3] = (255, 255, 255)
+    result = force_remove_white_edges(frame, depth=1, darkest_shade=245)
+    assert result[0, 0, 3] == 0
+    assert result[4, 4, 3] == 255
+    assert result[2, 4, 3] == 255
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")

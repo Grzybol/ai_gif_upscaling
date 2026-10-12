@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 SETTING_KEYS = (
     "start", "end", "fps", "background_mode", "key_color", "tolerance", "softness", "spill",
     "edge_cleanup", "hard_mask", "sample_key", "comics_fade_strength",
-    "comics_fade_depth", "ai_backend", "ai_model", "temporal", "crop",
+    "comics_fade_depth", "force_white_removal", "force_white_depth",
+    "force_white_shade", "ai_backend", "ai_model", "temporal", "crop",
     "padding", "center", "resize", "resize_width", "resize_height", "keep_aspect", "formats",
     "sheet_columns", "sheet_padding", "max_texture", "power_of_two", "output_dir", "overwrite",
     "keep_workdir", "use_cache",
@@ -102,6 +103,21 @@ def build_converter_tab() -> None:
                         label="Gradient depth (px)", minimum=1, maximum=16,
                         step=1, value=1,
                         info="Number of pixels inward from the recovered silhouette edge.",
+                    )
+                force_white_removal = gr.Checkbox(
+                    label="Forced removal of white pixels", value=False,
+                    info="Optional edge cleanup in every background mode.",
+                )
+                with gr.Group(visible=False) as force_white_group:
+                    force_white_depth = gr.Slider(
+                        label="Forced removal depth (px)", minimum=1, maximum=16,
+                        step=1, value=1,
+                        info="How many pixels inward from the detected asset edge to inspect.",
+                    )
+                    force_white_shade = gr.Slider(
+                        label="Darkest white shade to remove (0–255)",
+                        minimum=0, maximum=255, step=1, value=245,
+                        info="255 removes pure white; lower values include darker shades.",
                     )
                 with gr.Group(visible=True) as chroma_group:
                     key_color = gr.ColorPicker(label="Key color", value="#00ff00")
@@ -279,6 +295,7 @@ def build_converter_tab() -> None:
     setting_inputs = [
         start, end, fps, background_mode, key_color, tolerance, softness, spill, edge_cleanup,
         hard_mask, sample_key, comics_fade_strength, comics_fade_depth,
+        force_white_removal, force_white_depth, force_white_shade,
         ai_backend, ai_model, temporal, crop, padding, center, resize,
         resize_width, resize_height, keep_aspect, formats, sheet_columns, sheet_padding,
         max_texture, power_of_two, output_dir, overwrite, keep_workdir, use_cache,
@@ -554,6 +571,10 @@ def build_converter_tab() -> None:
     background_mode.change(
         on_mode, inputs=[background_mode, ai_backend],
         outputs=[chroma_group, ai_group, comics_group, mode_note],
+    )
+    force_white_removal.change(
+        lambda enabled: gr.update(visible=enabled),
+        inputs=[force_white_removal], outputs=[force_white_group],
     )
     ai_backend.change(on_backend, inputs=[ai_backend], outputs=[ai_status])
     resize.change(on_resize, inputs=[resize], outputs=[resize_width, resize_height, keep_aspect])
