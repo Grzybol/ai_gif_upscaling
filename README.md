@@ -237,12 +237,14 @@ The decoder still accepts GIF only. PNG and animated WebP are refused with that 
 
 ## Video converter (background removal)
 
-The GUI has a second tab, **VIDEO CONVERTER**, separate from the SeedVR2 upscaler.
-It turns an MP4, MOV, WebM or GIF (for example an ElevenLabs green-screen clip) into
-runtime-ready transparent assets. It does **not** need ComfyUI.
+The **VIDEO CONVERTER** tab accepts MP4, MOV, WebM, GIF, and spritesheet ZIPs
+exported by Upscale or Video Converter. It turns them into runtime-ready
+transparent assets without ComfyUI. ZIP input keeps its frame order, per-frame
+durations, and RGBA alpha. With Auto background mode, existing transparency is
+preserved. You can preview a ZIP frame before conversion.
 
 ```
-input video -> decode to PNG frames -> background removal / alpha -> temporal mask
+input video or spritesheet ZIP -> decode to PNG frames -> background removal / alpha -> temporal mask
 stabilization -> one common crop + padding -> resize -> export -> validate
 ```
 

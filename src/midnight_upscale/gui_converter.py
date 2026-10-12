@@ -58,13 +58,13 @@ def build_converter_tab() -> None:
 
     gr.Markdown("## Video Converter / Background Removal")
     gr.Markdown(
-        "Turn an MP4, MOV, WebM or GIF into transparent runtime assets: WebM alpha, "
+        "Turn an MP4, MOV, WebM, GIF or spritesheet ZIP into transparent runtime assets: WebM alpha, "
         "APNG, GIF preview, PNG frames or a spritesheet. Works without ComfyUI."
     )
     with gr.Row():
         with gr.Column():
             uploads = gr.File(
-                label="Input video",
+                label="Input video or spritesheet ZIP",
                 file_count="multiple",
                 file_types=list(VIDEO_EXTENSIONS),
                 type="filepath",
@@ -436,7 +436,7 @@ def build_converter_tab() -> None:
             shown = (*images, note)
         except PipelineError as exc:
             shown = (None, None, None, str(exc))
-        video = str(first) if first.suffix.lower() != ".gif" else None
+        video = str(first) if first.suffix.lower() not in {".gif", ".zip"} else None
         return (
             _panel(format_video_card(info) + extra),
             video,
