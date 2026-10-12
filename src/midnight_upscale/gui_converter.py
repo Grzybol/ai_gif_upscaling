@@ -315,10 +315,13 @@ def build_converter_tab() -> None:
             "Drawn/comics + white background": (
                 "Removes white, adds a subtle 1 px dark outline, and optionally fades edge alpha."
             ),
+            "Drawn/comics + white background (clean edge)": (
+                "Also trims the contaminated outer pixel and rebuilds edge color from inside."
+            ),
         }.get(mode, "")
         return (
             gr.update(visible=chroma_on), gr.update(visible=ai_on),
-            gr.update(visible=mode == "Drawn/comics + white background"), note,
+            gr.update(visible=mode.startswith("Drawn/comics + white background")), note,
         )
 
     def on_backend(backend: str) -> str:

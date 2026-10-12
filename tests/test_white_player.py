@@ -18,6 +18,7 @@ from midnight_upscale.white_background import (
     add_comics_outline,
     force_remove_white_edges,
     remove_white_background,
+    tighten_drawn_matte,
 )
 from tests.video_fixtures import make_video
 
@@ -110,6 +111,29 @@ def test_forced_white_removal_keys_border_canvas_in_none_mode() -> None:
     assert result[0, 0, 3] == 0
     assert result[4, 4, 3] == 255
     assert result[2, 4, 3] == 255
+
+
+def test_tight_drawn_matte_removes_tinted_halo_and_recovers_inner_color() -> None:
+    frame = np.zeros((15, 15, 4), dtype=np.uint8)
+    frame[2:13, 2:13] = (40, 30, 20, 255)
+    frame[2, 2:13, :3] = (235, 205, 165)  # white mixed with skin/gold
+    frame[3, 2:13, :3] = (180, 145, 105)  # still below the forced-white cutoff
+    result = tighten_drawn_matte(frame)
+    assert result[2, 7, 3] == 0
+    assert 0 < result[3, 7, 3] <= 192
+    assert result[3, 7, 0] < 100
+    assert tuple(result[7, 7]) == (40, 30, 20, 255)
+
+
+def test_tight_drawn_mode_resolves_separately() -> None:
+    frame = np.full((12, 12, 4), 255, dtype=np.uint8)
+    frame[3:9, 3:9, :3] = (30, 80, 20)
+    resolved = resolve_background(
+        BackgroundSettings(mode="drawn_white_tight"), has_alpha=False,
+        sample_frames=[frame],
+    )
+    assert resolved.mode == "drawn_white_tight"
+    assert remove_background(resolved, frame)[0, 0, 3] == 0
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")

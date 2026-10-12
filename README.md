@@ -259,6 +259,9 @@ through a lossy format.
   any background mode can optionally force near-white edge pixels to transparent
   using a depth (pixels) and a darkest white shade (0–255) threshold. In None
   mode, border-connected white canvas pixels are removed first;
+  Drawn/comics + white background (clean edge) is a separate, stronger option
+  that trims a color-contaminated outer pixel and reconstructs the new edge
+  from the interior, including gold or skin-colored white spill;
   white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an
   explicit change; the page shows the exact output frame count first.

@@ -66,6 +66,46 @@ def add_comics_outline(
     return result
 
 
+def tighten_drawn_matte(rgba: np.ndarray) -> np.ndarray:
+    """Discard the contaminated outer pixel and rebuild the new edge from inside.
+
+    A color threshold cannot recognize white mixed with gold, skin, or red by video
+    compression. This opt-in matte trims one output pixel regardless of its color,
+    then borrows RGB from the neighboring interior before the comic outline.
+    """
+
+    result = np.ascontiguousarray(rgba).copy()
+    mask = result[..., 3] >= 64
+    if not np.any(mask):
+        result[...] = 0
+        return result
+    inset = np.asarray(
+        Image.fromarray(mask.astype(np.uint8) * 255).filter(ImageFilter.MinFilter(3))
+    ) > 0
+    interior = np.asarray(
+        Image.fromarray(inset.astype(np.uint8) * 255).filter(ImageFilter.MinFilter(3))
+    ) > 0
+    edge = inset & ~interior
+    if np.any(edge) and np.any(interior):
+        source = result[..., :3] * interior[..., None]
+        blurred_rgb = np.asarray(
+            Image.fromarray(source).filter(ImageFilter.GaussianBlur(2)), dtype=np.float32
+        )
+        blurred_weight = np.asarray(
+            Image.fromarray(interior.astype(np.uint8) * 255).filter(
+                ImageFilter.GaussianBlur(2)
+            ),
+            dtype=np.float32,
+        )
+        usable = edge & (blurred_weight > 2)
+        recovered = blurred_rgb * (255.0 / np.maximum(blurred_weight[..., None], 1))
+        result[..., :3][usable] = np.clip(np.rint(recovered[usable]), 0, 255).astype(np.uint8)
+    result[..., 3][~inset] = 0
+    result[..., 3][edge] = np.minimum(result[..., 3][edge], 192)
+    result[..., :3][~inset] = 0
+    return result
+
+
 def force_remove_white_edges(
     rgba: np.ndarray, *, depth: int, darkest_shade: int
 ) -> np.ndarray:
