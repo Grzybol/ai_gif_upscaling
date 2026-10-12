@@ -29,12 +29,14 @@ from midnight_upscale.segmentation import (
 from midnight_upscale.utils import PipelineError
 from midnight_upscale.white_background import remove_white_background
 
-MODES = ("auto", "none", "chroma", "white", "ai")
+MODES = ("auto", "none", "chroma", "white", "drawn_white", "drawn_white_tight", "ai")
 MODE_LABELS = {
     "Auto": "auto",
     "None": "none",
     "Chroma Key": "chroma",
     "White background": "white",
+    "Drawn/comics + white background": "drawn_white",
+    "Drawn/comics + white background (clean edge)": "drawn_white_tight",
     "AI Segmentation": "ai",
 }
 
@@ -43,12 +45,19 @@ RESOLVED_ALPHA = "alpha"
 RESOLVED_NONE = "none"
 RESOLVED_CHROMA = "chroma"
 RESOLVED_WHITE = "white"
+RESOLVED_DRAWN_WHITE = "drawn_white"
+RESOLVED_DRAWN_WHITE_TIGHT = "drawn_white_tight"
 RESOLVED_AI = "ai"
 
 
 @dataclass(frozen=True)
 class BackgroundSettings:
     mode: str = "auto"
+    comics_fade_strength: float = 0.0
+    comics_fade_depth: int = 1
+    force_white_removal: bool = False
+    force_white_depth: int = 1
+    force_white_shade: int = 245
     chroma: ChromaSettings = field(default_factory=ChromaSettings)
     # Manual Chroma Key: read the key color from the frame border instead of the picker.
     sample_key_color: bool = False
@@ -99,6 +108,20 @@ def resolve_background(
             RESOLVED_WHITE,
             "WHITE BACKGROUND",
             "Near-white pixels are keyed throughout the frame, including enclosed gaps.",
+        )
+
+    if mode == "drawn_white":
+        return ResolvedBackground(
+            RESOLVED_DRAWN_WHITE,
+            "DRAWN/COMICS + WHITE BACKGROUND",
+            "White background is removed, then a subtle 1 px inner outline is applied.",
+        )
+
+    if mode == "drawn_white_tight":
+        return ResolvedBackground(
+            RESOLVED_DRAWN_WHITE_TIGHT,
+            "DRAWN/COMICS + WHITE BACKGROUND (CLEAN EDGE)",
+            "White is removed; the contaminated outer pixel is trimmed and recolored from inside.",
         )
 
     if mode == "ai":
@@ -172,7 +195,7 @@ def remove_background(
     if resolved.mode == RESOLVED_CHROMA:
         assert resolved.chroma is not None
         keyed = chroma_key(rgba[..., :3], resolved.chroma)
-    elif resolved.mode == RESOLVED_WHITE:
+    elif resolved.mode in {RESOLVED_WHITE, RESOLVED_DRAWN_WHITE, RESOLVED_DRAWN_WHITE_TIGHT}:
         # This function multiplies the source alpha itself.
         return remove_white_background(rgba)
     elif resolved.mode == RESOLVED_AI:
