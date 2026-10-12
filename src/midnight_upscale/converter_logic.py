@@ -69,7 +69,7 @@ RESIZE_LABELS = [*RESIZE_CHOICES, "Custom"]
 PADDING_CHOICES = ["0", "2", "4", "8", "16"]
 SHEET_PADDING_CHOICES = ["0", "1", "2", "4"]
 MAX_TEXTURE_CHOICES = ["2048", "4096", "8192"]
-PREVIEW_BACKGROUNDS = ["checkerboard", "black", "white"]
+PREVIEW_BACKGROUNDS = ["checkerboard", "black", "white", "gray", "magenta", "green"]
 DEFAULT_FORMATS = ["Transparent WebM"]
 
 STAGE_TITLES = {
@@ -150,6 +150,9 @@ def settings_from_form(
     force_white_removal: bool = False,
     force_white_depth: int = 1,
     force_white_shade: int = 245,
+    draw_border: bool = False,
+    border_width: int = 1,
+    border_color: str = "#000000",
     key_color: str,
     tolerance: float,
     softness: float,
@@ -201,6 +204,9 @@ def settings_from_form(
         force_white_removal=bool(force_white_removal),
         force_white_depth=int(force_white_depth),
         force_white_shade=int(force_white_shade),
+        draw_border=bool(draw_border),
+        border_width=int(border_width),
+        border_color=parse_hex_color(border_color or "#000000"),
         chroma=chroma,
         sample_key_color=bool(sample_key),
         ai_backend=ai_backend or DEFAULT_BACKEND,
