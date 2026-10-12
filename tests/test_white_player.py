@@ -154,17 +154,20 @@ def test_outward_border_has_selected_color_and_preserves_opaque_artwork() -> Non
     assert tuple(result[0, 0]) == (0, 0, 0, 0)
 
 
-def test_border_smoothing_changes_only_added_geometry() -> None:
+def test_border_smoothing_blends_inward_without_changing_outward_shape() -> None:
     frame = np.zeros((15, 15, 4), dtype=np.uint8)
     frame[2:13, 2:13] = (200, 100, 40, 255)
+    frame[2, 7, :3] = (0, 0, 0)  # intentional dark lineart
     plain = draw_outward_border(frame, width=1, color=(0, 0, 0))
     smooth = draw_outward_border(frame, width=1, color=(0, 0, 0), smooth_depth=4)
     pad = 3
-    np.testing.assert_array_equal(smooth[pad + 2:pad + 13, pad + 2:pad + 13],
-                                  frame[2:13, 2:13])
-    assert np.any(plain[..., 3] != smooth[..., 3])
-    assert np.any((smooth[..., 3] > 0) & (smooth[..., 3] < 255) &
-                  (np.pad(frame[..., 3], pad) == 0))
+    np.testing.assert_array_equal(plain[..., 3], smooth[..., 3])
+    assert 0 < smooth[pad + 2, pad + 5, 0] < plain[pad + 2, pad + 5, 0]
+    assert smooth[pad + 3, pad + 5, 0] > smooth[pad + 2, pad + 5, 0]
+    np.testing.assert_array_equal(smooth[pad + 7, pad + 7], frame[7, 7])
+    np.testing.assert_array_equal(smooth[pad + 2, pad + 7, :3], (0, 0, 0))
+    outside = np.pad(frame[..., 3] == 0, pad, constant_values=True)
+    np.testing.assert_array_equal(plain[..., :3][outside], smooth[..., :3][outside])
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")

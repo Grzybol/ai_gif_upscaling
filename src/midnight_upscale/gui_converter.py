@@ -116,12 +116,12 @@ def build_converter_tab() -> None:
                         border_color = gr.ColorPicker(label="Border color", value="#000000")
                         smooth_border = gr.Checkbox(
                             label="Smooth border transition", value=False,
-                            info="Smooth the added outline geometry without blurring asset colors.",
+                            info="Blend the border color gently into the asset, starting at its inner edge.",
                         )
                         border_smooth_depth = gr.Slider(
                             label="Outline contour smoothing", minimum=1, maximum=16,
                             step=1, value=2, visible=False,
-                            info="Subpixel feather on the outward border; original RGB stays intact.",
+                            info="Transition depth inward from the outline, in output pixels.",
                         )
                     gr.Markdown("Preview this mode")
                     comics_frame = gr.Slider(

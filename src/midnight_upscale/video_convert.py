@@ -92,7 +92,7 @@ CONVERTER_STAGES: tuple[str, ...] = (
     STAGE_FINISHED,
 )
 
-CACHE_VERSION = 3  # comics outline changes finalized frames
+CACHE_VERSION = 4  # inward border smoothing changes finalized frames
 REVIEW_SAMPLES = 12
 PREVIEW_MIN_EVERY = 3
 PREVIEW_MAX_EVERY = 10

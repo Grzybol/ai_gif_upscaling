@@ -266,11 +266,13 @@ through a lossy format.
   from the interior, including gold or skin-colored white spill;
   both drawn/comics modes can optionally draw a chosen-color border 1–16 output
   pixels outward from the alpha silhouette. Its 4× supersampled contour adds a
-  fixed transparent gutter and leaves opaque artwork RGB unchanged. The mode panel
+  fixed transparent gutter and leaves opaque artwork RGB unchanged when smoothing
+  is off. The mode panel
   includes a frame picker and
   preview on checkerboard, black, white, gray, magenta, or green;
-  optional border transition control smooths the added contour's subpixel
-  geometry without blurring the asset inward. Multiple input videos can be
+  optional border transition control blends the chosen border color a short
+  distance inward from the silhouette edge without blurring artwork RGB.
+  Multiple input videos can be
   exported into one ZIP with a subdirectory for each video's output files;
   white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an

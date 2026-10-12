@@ -111,7 +111,7 @@ def tighten_drawn_matte(rgba: np.ndarray) -> np.ndarray:
 def draw_outward_border(
     rgba: np.ndarray, *, width: int, color: tuple[int, int, int], smooth_depth: int = 0
 ) -> np.ndarray:
-    """Composite a supersampled contour behind the asset, preserving opaque RGB."""
+    """Draw a supersampled outward contour with optional subtle inward color blend."""
 
     source = np.ascontiguousarray(rgba)
     width = max(0, min(int(width), 16))
@@ -129,16 +129,7 @@ def draw_outward_border(
     mask = Image.fromarray(geometry_alpha, "L").resize(
         (frame_width * factor, height * factor), Image.Resampling.BILINEAR
     )
-    if smooth_depth:
-        mask = mask.filter(
-            ImageFilter.GaussianBlur(min(0.5, max(0, int(smooth_depth)) / 8) * factor)
-        )
     expanded = mask.filter(ImageFilter.MaxFilter(2 * width * factor + 1))
-    if smooth_depth:
-        # Smooth only the *added geometry*. 1–16 maps to a subpixel feather
-        # of 0.125–1.0 output pixels; no asset RGB is blurred inward.
-        feather = min(1.0, max(0, int(smooth_depth)) / 16) * factor
-        expanded = expanded.filter(ImageFilter.GaussianBlur(feather))
     expanded_alpha = np.asarray(
         expanded.resize((frame_width, height), Image.Resampling.BOX), dtype=np.int16
     )
@@ -146,8 +137,8 @@ def draw_outward_border(
     source_alpha = alpha.astype(np.float32) / 255
     behind = border_alpha * (1 - source_alpha)
     combined = source_alpha + behind
-    # Straight-alpha compositing keeps opaque artwork *exactly* unchanged and
-    # mixes the outline only where the original edge was semi-transparent.
+    # Straight-alpha compositing keeps opaque artwork unchanged when the
+    # optional inward transition is disabled.
     affected = behind > 0
     if np.any(affected):
         original_rgb = result[..., :3][affected].astype(np.float32)
@@ -156,6 +147,41 @@ def draw_outward_border(
                  + color_rgb * behind[affected, None]) / combined[affected, None]
         result[..., :3][affected] = np.rint(np.clip(mixed, 0, 255)).astype(np.uint8)
         result[..., 3][affected] = np.rint(combined[affected] * 255).astype(np.uint8)
+
+    depth = max(0, min(int(smooth_depth), 16))
+    if depth:
+        # Only color a narrow band *inside* the original silhouette. Eroded
+        # one-pixel rings establish distance from its edge; blurring this
+        # scalar weight (never the artwork RGB) softens stair-step boundaries.
+        current = geometry_alpha >= 16
+        weight = np.zeros(alpha.shape, dtype=np.float32)
+        for ring_index in range(depth):
+            eroded = np.asarray(
+                Image.fromarray(current.astype(np.uint8) * 255, "L").filter(
+                    ImageFilter.MinFilter(3)
+                )
+            ) > 0
+            weight[current & ~eroded] = 0.35 * (1 - ring_index / depth) ** 2
+            current = eroded
+            if not np.any(current):
+                break
+        weight = np.asarray(
+            Image.fromarray(np.rint(weight * 255).astype(np.uint8), "L").filter(
+                ImageFilter.GaussianBlur(0.45)
+            ), dtype=np.float32,
+        ) / 255
+        weight *= (geometry_alpha >= 16) * source_alpha
+        color_rgb = np.asarray(color, dtype=np.float32)
+        rgb = result[..., :3].astype(np.float32)
+        # Existing lineart close to the selected border color needs no second
+        # darkening. The transition remains gentle even on bright artwork.
+        difference = np.max(np.abs(rgb - color_rgb), axis=2)
+        weight *= np.minimum(difference / 96, 1)
+        changed = weight > 0
+        result[..., :3][changed] = np.rint(
+            np.clip(rgb[changed] * (1 - weight[changed, None])
+                    + color_rgb * weight[changed, None], 0, 255)
+        ).astype(np.uint8)
     return result
 
 
