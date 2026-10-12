@@ -253,6 +253,8 @@ through a lossy format.
   border, else AI Segmentation; the resolved choice is always shown), None,
   Chroma Key (soft alpha, spill suppression, edge cleanup), White background,
   AI Segmentation. White background removes near-white pixels even between leaves;
+  Drawn/comics + white background additionally darkens the one-pixel inner edge
+  after resizing to hide pale fringes around illustrated characters;
   white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an
   explicit change; the page shows the exact output frame count first.

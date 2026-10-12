@@ -14,7 +14,7 @@ from PIL import Image
 from midnight_upscale.background import BackgroundSettings, remove_background, resolve_background
 from midnight_upscale.spritesheet import SpritesheetSettings
 from midnight_upscale.video_convert import ConvertSettings, convert_video
-from midnight_upscale.white_background import remove_white_background
+from midnight_upscale.white_background import add_comics_outline, remove_white_background
 from tests.video_fixtures import make_video
 
 
@@ -43,6 +43,32 @@ def test_manual_white_mode_needs_no_ai_model() -> None:
     assert resolved.label == "WHITE BACKGROUND"
     assert result[0, 0, 3] == 0
     assert result[5, 5, 3] == 255
+
+
+def test_comics_outline_is_one_pixel_inside_and_preserves_alpha() -> None:
+    frame = np.zeros((9, 9, 4), dtype=np.uint8)
+    frame[2:7, 2:7] = (200, 100, 40, 255)
+    frame[1, 4] = (250, 250, 250, 8)
+    result = add_comics_outline(frame)
+    assert tuple(result[2, 4]) == (100, 50, 20, 255)
+    assert tuple(result[3, 4]) == (200, 100, 40, 255)
+    assert tuple(result[4, 4]) == (200, 100, 40, 255)
+    assert result[1, 4, 3] == 0
+    np.testing.assert_array_equal(result[..., 3], np.where(frame[..., 3] < 16, 0, frame[..., 3]))
+
+
+def test_drawn_white_uses_white_key_with_separate_mode() -> None:
+    frame = np.full((12, 12, 4), 255, dtype=np.uint8)
+    frame[3:9, 3:9, :3] = (30, 80, 20)
+    resolved = resolve_background(
+        BackgroundSettings(mode="drawn_white"), has_alpha=False, sample_frames=[frame]
+    )
+    keyed = remove_background(resolved, frame)
+    outlined = add_comics_outline(keyed)
+    assert resolved.mode == "drawn_white"
+    assert keyed[5, 5, 3] == outlined[5, 5, 3] == 255
+    assert outlined[3, 5, 0] < keyed[3, 5, 0]
+    assert outlined[5, 5, 0] == keyed[5, 5, 0]
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")

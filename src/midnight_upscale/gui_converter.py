@@ -282,6 +282,9 @@ def build_converter_tab() -> None:
             "Auto": "Auto: keeps existing alpha, else Chroma Key for a green border, else AI.",
             "None": "No background removal. Frames are used as decoded.",
             "White background": "Removes near-white pixels, including gaps between fine leaves.",
+            "Drawn/comics + white background": (
+                "Removes white and adds a subtle 1 px dark outline to drawn characters."
+            ),
         }.get(mode, "")
         return gr.update(visible=chroma_on), gr.update(visible=ai_on), note
 

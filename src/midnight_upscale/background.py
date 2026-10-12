@@ -29,12 +29,13 @@ from midnight_upscale.segmentation import (
 from midnight_upscale.utils import PipelineError
 from midnight_upscale.white_background import remove_white_background
 
-MODES = ("auto", "none", "chroma", "white", "ai")
+MODES = ("auto", "none", "chroma", "white", "drawn_white", "ai")
 MODE_LABELS = {
     "Auto": "auto",
     "None": "none",
     "Chroma Key": "chroma",
     "White background": "white",
+    "Drawn/comics + white background": "drawn_white",
     "AI Segmentation": "ai",
 }
 
@@ -43,6 +44,7 @@ RESOLVED_ALPHA = "alpha"
 RESOLVED_NONE = "none"
 RESOLVED_CHROMA = "chroma"
 RESOLVED_WHITE = "white"
+RESOLVED_DRAWN_WHITE = "drawn_white"
 RESOLVED_AI = "ai"
 
 
@@ -99,6 +101,13 @@ def resolve_background(
             RESOLVED_WHITE,
             "WHITE BACKGROUND",
             "Near-white pixels are keyed throughout the frame, including enclosed gaps.",
+        )
+
+    if mode == "drawn_white":
+        return ResolvedBackground(
+            RESOLVED_DRAWN_WHITE,
+            "DRAWN/COMICS + WHITE BACKGROUND",
+            "White background is removed, then a subtle 1 px inner outline is applied.",
         )
 
     if mode == "ai":
@@ -172,7 +181,7 @@ def remove_background(
     if resolved.mode == RESOLVED_CHROMA:
         assert resolved.chroma is not None
         keyed = chroma_key(rgba[..., :3], resolved.chroma)
-    elif resolved.mode == RESOLVED_WHITE:
+    elif resolved.mode in {RESOLVED_WHITE, RESOLVED_DRAWN_WHITE}:
         # This function multiplies the source alpha itself.
         return remove_white_background(rgba)
     elif resolved.mode == RESOLVED_AI:

@@ -24,6 +24,28 @@ def remove_white_background(rgba: np.ndarray) -> np.ndarray:
     return result
 
 
+def add_comics_outline(rgba: np.ndarray) -> np.ndarray:
+    """Darken just the inner, one-pixel silhouette edge after final resizing.
+
+    Keeping the original alpha avoids an opaque halo around antialiased details.
+    Very faint keyed pixels are removed so isolated white specks cannot survive.
+    """
+
+    result = np.ascontiguousarray(rgba).copy()
+    alpha = result[..., 3]
+    alpha[alpha < 16] = 0
+    silhouette = alpha > 0
+    if not np.any(silhouette):
+        return result
+    eroded = np.asarray(
+        Image.fromarray(silhouette.astype(np.uint8) * 255).filter(ImageFilter.MinFilter(3))
+    ) > 0
+    edge = silhouette & ~eroded
+    result[edge, :3] = np.rint(result[edge, :3].astype(np.float32) * 0.5).astype(np.uint8)
+    result[~silhouette, :3] = 0
+    return result
+
+
 def _box_blur(values: np.ndarray, radius: int) -> np.ndarray:
     padded = np.pad(values, radius, mode="edge")
     integral = np.pad(padded, ((1, 0), (1, 0)), mode="constant").astype(np.float32)

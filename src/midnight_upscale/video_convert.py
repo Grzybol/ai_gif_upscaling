@@ -92,7 +92,7 @@ CONVERTER_STAGES: tuple[str, ...] = (
     STAGE_FINISHED,
 )
 
-CACHE_VERSION = 2  # white-key processing and its edge cleanup changed
+CACHE_VERSION = 3  # comics outline changes finalized frames
 REVIEW_SAMPLES = 12
 PREVIEW_MIN_EVERY = 3
 PREVIEW_MAX_EVERY = 10
@@ -592,7 +592,10 @@ def _process_frames(
     current = _crop(current, workdir / "3_cropped", settings, obs)
 
     # 7. Resize (also cleans the color under fully transparent pixels)
-    final, transparent = _finalize(current, workdir / "4_final", settings.resize, obs)
+    final, transparent = _finalize(
+        current, workdir / "4_final", settings.resize, obs,
+        comics_outline=resolved.mode == "drawn_white",
+    )
     with Image.open(final[0]) as probe:
         size = probe.size
     return Processed(
@@ -757,7 +760,8 @@ def _crop(
 
 
 def _finalize(
-    frames: list[Path], destination: Path, resize: ResizeSettings, obs: RunObserver
+    frames: list[Path], destination: Path, resize: ResizeSettings, obs: RunObserver,
+    *, comics_outline: bool = False,
 ) -> tuple[list[Path], bool]:
     """Resize (when asked), clean transparent-pixel color, and write the final frames."""
 
@@ -786,6 +790,10 @@ def _finalize(
         if resize.active:
             rgba = resize_rgba(rgba, size)
         rgba = fill_transparent_rgb(rgba)
+        if comics_outline:
+            from midnight_upscale.white_background import add_comics_outline
+
+            rgba = add_comics_outline(rgba)
         if np.any(rgba[..., 3] < 255):
             transparent = True
         target = frame_path(destination, index)
@@ -847,6 +855,10 @@ def preview_one_frame(
     remover = open_remover(resolved)
     try:
         result = remove_background(resolved, original, remover)
+        if resolved.mode == "drawn_white":
+            from midnight_upscale.white_background import add_comics_outline
+
+            result = add_comics_outline(result)
     finally:
         if remover is not None:
             remover.close()
