@@ -24,7 +24,9 @@ def remove_white_background(rgba: np.ndarray) -> np.ndarray:
     return result
 
 
-def add_comics_outline(rgba: np.ndarray) -> np.ndarray:
+def add_comics_outline(
+    rgba: np.ndarray, *, fade_strength: float = 0.0, fade_depth: int = 1
+) -> np.ndarray:
     """Darken just the inner, one-pixel silhouette edge after final resizing.
 
     Keeping the original alpha avoids an opaque halo around antialiased details.
@@ -42,6 +44,22 @@ def add_comics_outline(rgba: np.ndarray) -> np.ndarray:
     ) > 0
     edge = silhouette & ~eroded
     result[edge, :3] = np.rint(result[edge, :3].astype(np.float32) * 0.5).astype(np.uint8)
+    strength = float(np.clip(fade_strength, 0.0, 1.0))
+    depth = max(0, min(int(fade_depth), 16))
+    if strength > 0 and depth > 0:
+        current = silhouette
+        alpha_float = alpha.astype(np.float32)
+        for ring_index in range(depth):
+            inner = np.asarray(
+                Image.fromarray(current.astype(np.uint8) * 255).filter(ImageFilter.MinFilter(3))
+            ) > 0
+            ring = current & ~inner
+            if not np.any(ring):
+                break
+            factor = 1.0 - strength * (1.0 - ring_index / depth)
+            alpha_float[ring] *= factor
+            current = inner
+        result[..., 3] = np.rint(alpha_float).astype(np.uint8)
     result[~silhouette, :3] = 0
     return result
 

@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 # Order of the settings inputs. ``_settings`` zips these with the values Gradio passes.
 SETTING_KEYS = (
     "start", "end", "fps", "background_mode", "key_color", "tolerance", "softness", "spill",
-    "edge_cleanup", "hard_mask", "sample_key", "ai_backend", "ai_model", "temporal", "crop",
+    "edge_cleanup", "hard_mask", "sample_key", "comics_fade_strength",
+    "comics_fade_depth", "ai_backend", "ai_model", "temporal", "crop",
     "padding", "center", "resize", "resize_width", "resize_height", "keep_aspect", "formats",
     "sheet_columns", "sheet_padding", "max_texture", "power_of_two", "output_dir", "overwrite",
     "keep_workdir", "use_cache",
@@ -91,6 +92,17 @@ def build_converter_tab() -> None:
                     label="Background removal", choices=list(MODE_LABELS), value="Auto"
                 )
                 mode_note = gr.Markdown("")
+                with gr.Group(visible=False) as comics_group:
+                    comics_fade_strength = gr.Slider(
+                        label="Edge transparency gradient (%)", minimum=0, maximum=100,
+                        step=1, value=0,
+                        info="0 disables the gradient; higher values fade the outer edge more.",
+                    )
+                    comics_fade_depth = gr.Slider(
+                        label="Gradient depth (px)", minimum=1, maximum=16,
+                        step=1, value=1,
+                        info="Number of pixels inward from the recovered silhouette edge.",
+                    )
                 with gr.Group(visible=True) as chroma_group:
                     key_color = gr.ColorPicker(label="Key color", value="#00ff00")
                     sample_key = gr.Checkbox(
@@ -266,7 +278,8 @@ def build_converter_tab() -> None:
     view_state = gr.State({})
     setting_inputs = [
         start, end, fps, background_mode, key_color, tolerance, softness, spill, edge_cleanup,
-        hard_mask, sample_key, ai_backend, ai_model, temporal, crop, padding, center, resize,
+        hard_mask, sample_key, comics_fade_strength, comics_fade_depth,
+        ai_backend, ai_model, temporal, crop, padding, center, resize,
         resize_width, resize_height, keep_aspect, formats, sheet_columns, sheet_padding,
         max_texture, power_of_two, output_dir, overwrite, keep_workdir, use_cache,
     ]  # fmt: skip
@@ -275,7 +288,7 @@ def build_converter_tab() -> None:
 
     # ---------------------------------------------------------------- handlers
 
-    def on_mode(mode: str, backend: str) -> tuple[object, object, str]:
+    def on_mode(mode: str, backend: str) -> tuple[object, object, object, str]:
         chroma_on = mode in {"Auto", "Chroma Key"}
         ai_on = mode in {"Auto", "AI Segmentation"}
         note = {
@@ -283,10 +296,13 @@ def build_converter_tab() -> None:
             "None": "No background removal. Frames are used as decoded.",
             "White background": "Removes near-white pixels, including gaps between fine leaves.",
             "Drawn/comics + white background": (
-                "Removes white and adds a subtle 1 px dark outline to drawn characters."
+                "Removes white, adds a subtle 1 px dark outline, and optionally fades edge alpha."
             ),
         }.get(mode, "")
-        return gr.update(visible=chroma_on), gr.update(visible=ai_on), note
+        return (
+            gr.update(visible=chroma_on), gr.update(visible=ai_on),
+            gr.update(visible=mode == "Drawn/comics + white background"), note,
+        )
 
     def on_backend(backend: str) -> str:
         return _panel(logic.ai_status_text(backend))
@@ -536,7 +552,8 @@ def build_converter_tab() -> None:
     # ------------------------------------------------------------------ wiring
 
     background_mode.change(
-        on_mode, inputs=[background_mode, ai_backend], outputs=[chroma_group, ai_group, mode_note]
+        on_mode, inputs=[background_mode, ai_backend],
+        outputs=[chroma_group, ai_group, comics_group, mode_note],
     )
     ai_backend.change(on_backend, inputs=[ai_backend], outputs=[ai_status])
     resize.change(on_resize, inputs=[resize], outputs=[resize_width, resize_height, keep_aspect])

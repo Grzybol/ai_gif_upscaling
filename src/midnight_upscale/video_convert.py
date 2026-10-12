@@ -595,6 +595,8 @@ def _process_frames(
     final, transparent = _finalize(
         current, workdir / "4_final", settings.resize, obs,
         comics_outline=resolved.mode == "drawn_white",
+        comics_fade_strength=settings.background.comics_fade_strength,
+        comics_fade_depth=settings.background.comics_fade_depth,
     )
     with Image.open(final[0]) as probe:
         size = probe.size
@@ -761,7 +763,8 @@ def _crop(
 
 def _finalize(
     frames: list[Path], destination: Path, resize: ResizeSettings, obs: RunObserver,
-    *, comics_outline: bool = False,
+    *, comics_outline: bool = False, comics_fade_strength: float = 0.0,
+    comics_fade_depth: int = 1,
 ) -> tuple[list[Path], bool]:
     """Resize (when asked), clean transparent-pixel color, and write the final frames."""
 
@@ -793,7 +796,9 @@ def _finalize(
         if comics_outline:
             from midnight_upscale.white_background import add_comics_outline
 
-            rgba = add_comics_outline(rgba)
+            rgba = add_comics_outline(
+                rgba, fade_strength=comics_fade_strength, fade_depth=comics_fade_depth
+            )
         if np.any(rgba[..., 3] < 255):
             transparent = True
         target = frame_path(destination, index)
@@ -858,7 +863,11 @@ def preview_one_frame(
         if resolved.mode == "drawn_white":
             from midnight_upscale.white_background import add_comics_outline
 
-            result = add_comics_outline(result)
+            result = add_comics_outline(
+                result,
+                fade_strength=settings.background.comics_fade_strength,
+                fade_depth=settings.background.comics_fade_depth,
+            )
     finally:
         if remover is not None:
             remover.close()

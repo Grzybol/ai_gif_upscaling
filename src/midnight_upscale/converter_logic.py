@@ -145,6 +145,8 @@ def settings_from_form(
     end: object,
     fps: object,
     background_mode: str,
+    comics_fade_strength: float = 0,
+    comics_fade_depth: int = 1,
     key_color: str,
     tolerance: float,
     softness: float,
@@ -191,6 +193,8 @@ def settings_from_form(
     )
     background = BackgroundSettings(
         mode=MODE_LABELS.get(background_mode, "auto"),
+        comics_fade_strength=float(comics_fade_strength) / 100.0,
+        comics_fade_depth=int(comics_fade_depth),
         chroma=chroma,
         sample_key_color=bool(sample_key),
         ai_backend=ai_backend or DEFAULT_BACKEND,

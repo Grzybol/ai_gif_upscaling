@@ -71,6 +71,18 @@ def test_drawn_white_uses_white_key_with_separate_mode() -> None:
     assert outlined[5, 5, 0] == keyed[5, 5, 0]
 
 
+def test_comics_gradient_fades_alpha_inward_by_depth() -> None:
+    frame = np.zeros((11, 11, 4), dtype=np.uint8)
+    frame[2:9, 2:9] = (120, 80, 40, 255)
+    result = add_comics_outline(frame, fade_strength=0.8, fade_depth=3)
+    assert result[2, 5, 3] == 51
+    assert result[3, 5, 3] == 119
+    assert result[4, 5, 3] == 187
+    assert result[5, 5, 3] == 255
+    assert result[2, 5, 0] == 60
+    assert result[3, 5, 0] == 120
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
 def test_spritesheet_player_uses_exported_atlas_and_timing(tmp_path: Path) -> None:
     frames = []
