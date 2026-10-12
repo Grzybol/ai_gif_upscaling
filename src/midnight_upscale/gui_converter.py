@@ -109,18 +109,19 @@ def build_converter_tab() -> None:
                     draw_border = gr.Checkbox(label="Draw black border", value=False)
                     with gr.Group(visible=False) as border_group:
                         border_width = gr.Slider(
-                            label="Inner border thickness (px)", minimum=1, maximum=16,
+                            label="Outward border thickness (px)", minimum=1, maximum=16,
                             step=1, value=1,
-                            info="Drawn inward; the exported silhouette does not grow.",
+                            info="Drawn outside the alpha silhouette; adds a small transparent gutter.",
                         )
                         border_color = gr.ColorPicker(label="Border color", value="#000000")
                         smooth_border = gr.Checkbox(
                             label="Smooth border transition", value=False,
-                            info="Blend the inner border edge into the asset color.",
+                            info="Smooth the added outline geometry without blurring asset colors.",
                         )
                         border_smooth_depth = gr.Slider(
-                            label="Smoothing depth inward (px)", minimum=1, maximum=16,
+                            label="Outline contour smoothing", minimum=1, maximum=16,
                             step=1, value=2, visible=False,
+                            info="Subpixel feather on the outward border; original RGB stays intact.",
                         )
                     gr.Markdown("Preview this mode")
                     comics_frame = gr.Slider(

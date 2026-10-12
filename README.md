@@ -265,10 +265,12 @@ through a lossy format.
   that trims a color-contaminated outer pixel and reconstructs the new edge
   from the interior, including gold or skin-colored white spill;
   both drawn/comics modes can optionally draw a chosen-color border 1–16 output
-  pixels inward from the silhouette. The mode panel includes a frame picker and
+  pixels outward from the alpha silhouette. Its 4× supersampled contour adds a
+  fixed transparent gutter and leaves opaque artwork RGB unchanged. The mode panel
+  includes a frame picker and
   preview on checkerboard, black, white, gray, magenta, or green;
-  the border can blend into the asset over a configurable number of pixels
-  measured inward from the border's inner edge. Multiple input videos can be
+  optional border transition control smooths the added contour's subpixel
+  geometry without blurring the asset inward. Multiple input videos can be
   exported into one ZIP with a subdirectory for each video's output files;
   white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an

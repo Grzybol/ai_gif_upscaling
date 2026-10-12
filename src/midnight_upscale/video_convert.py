@@ -594,19 +594,7 @@ def _process_frames(
     # 7. Resize (also cleans the color under fully transparent pixels)
     final, transparent = _finalize(
         current, workdir / "4_final", settings.resize, obs,
-        comics_outline=resolved.mode in {"drawn_white", "drawn_white_tight"},
-        tight_drawn_matte=resolved.mode == "drawn_white_tight",
-        comics_fade_strength=settings.background.comics_fade_strength,
-        comics_fade_depth=settings.background.comics_fade_depth,
-        force_white_removal=settings.background.force_white_removal,
-        force_white_depth=settings.background.force_white_depth,
-        force_white_shade=settings.background.force_white_shade,
-        draw_border=settings.background.draw_border and resolved.mode in {
-            "drawn_white", "drawn_white_tight"
-        },
-        border_width=settings.background.border_width,
-        border_color=settings.background.border_color,
-        border_smooth_depth=settings.background.border_smooth_depth,
+        background=settings.background, resolved_mode=resolved.mode,
     )
     with Image.open(final[0]) as probe:
         size = probe.size
@@ -773,13 +761,7 @@ def _crop(
 
 def _finalize(
     frames: list[Path], destination: Path, resize: ResizeSettings, obs: RunObserver,
-    *, comics_outline: bool = False, tight_drawn_matte: bool = False,
-    comics_fade_strength: float = 0.0,
-    comics_fade_depth: int = 1, force_white_removal: bool = False,
-    force_white_depth: int = 1, force_white_shade: int = 245,
-    draw_border: bool = False, border_width: int = 1,
-    border_color: tuple[int, int, int] = (0, 0, 0),
-    border_smooth_depth: int = 0,
+    *, background: BackgroundSettings, resolved_mode: str,
 ) -> tuple[list[Path], bool]:
     """Resize (when asked), clean transparent-pixel color, and write the final frames."""
 
@@ -807,30 +789,7 @@ def _finalize(
         rgba = read_rgba(path)
         if resize.active:
             rgba = resize_rgba(rgba, size)
-        if force_white_removal:
-            from midnight_upscale.white_background import force_remove_white_edges
-
-            rgba = force_remove_white_edges(
-                rgba, depth=force_white_depth, darkest_shade=force_white_shade
-            )
-        rgba = fill_transparent_rgb(rgba)
-        if tight_drawn_matte:
-            from midnight_upscale.white_background import tighten_drawn_matte
-
-            rgba = tighten_drawn_matte(rgba)
-        if comics_outline:
-            from midnight_upscale.white_background import add_comics_outline
-
-            rgba = add_comics_outline(
-                rgba, fade_strength=comics_fade_strength, fade_depth=comics_fade_depth
-            )
-        if draw_border:
-            from midnight_upscale.white_background import draw_inner_border
-
-            rgba = draw_inner_border(
-                rgba, width=border_width, color=border_color,
-                smooth_depth=border_smooth_depth,
-            )
+        rgba = _finalize_frame(rgba, background, resolved_mode)
         if np.any(rgba[..., 3] < 255):
             transparent = True
         target = frame_path(destination, index)
@@ -844,6 +803,39 @@ def _finalize(
             frames_kind="completed",
         )
     return out, transparent
+
+
+def _finalize_frame(
+    rgba: np.ndarray, background: BackgroundSettings, resolved_mode: str
+) -> np.ndarray:
+    """Shared finishing path for selected-frame preview and full export."""
+    if background.force_white_removal:
+        from midnight_upscale.white_background import force_remove_white_edges
+
+        rgba = force_remove_white_edges(
+            rgba, depth=background.force_white_depth,
+            darkest_shade=background.force_white_shade,
+        )
+    rgba = fill_transparent_rgb(rgba)
+    if resolved_mode == "drawn_white_tight":
+        from midnight_upscale.white_background import tighten_drawn_matte
+
+        rgba = tighten_drawn_matte(rgba)
+    if resolved_mode in {"drawn_white", "drawn_white_tight"}:
+        from midnight_upscale.white_background import add_comics_outline, draw_outward_border
+
+        draw_border = background.draw_border
+        rgba = add_comics_outline(
+            rgba, fade_strength=background.comics_fade_strength,
+            fade_depth=background.comics_fade_depth,
+            darken_edge=not draw_border,
+        )
+        if draw_border:
+            rgba = draw_outward_border(
+                rgba, width=background.border_width, color=background.border_color,
+                smooth_depth=background.border_smooth_depth,
+            )
+    return rgba
 
 
 def _save_review(
@@ -896,35 +888,7 @@ def preview_one_frame(
             result = resize_rgba(
                 result, target_size(result.shape[1], result.shape[0], settings.resize)
             )
-        if settings.background.force_white_removal:
-            from midnight_upscale.white_background import force_remove_white_edges
-
-            result = force_remove_white_edges(
-                result,
-                depth=settings.background.force_white_depth,
-                darkest_shade=settings.background.force_white_shade,
-            )
-        result = fill_transparent_rgb(result)
-        if resolved.mode == "drawn_white_tight":
-            from midnight_upscale.white_background import tighten_drawn_matte
-
-            result = tighten_drawn_matte(result)
-        if resolved.mode in {"drawn_white", "drawn_white_tight"}:
-            from midnight_upscale.white_background import add_comics_outline
-
-            result = add_comics_outline(
-                result,
-                fade_strength=settings.background.comics_fade_strength,
-                fade_depth=settings.background.comics_fade_depth,
-            )
-            if settings.background.draw_border:
-                from midnight_upscale.white_background import draw_inner_border
-
-                result = draw_inner_border(
-                    result, width=settings.background.border_width,
-                    color=settings.background.border_color,
-                    smooth_depth=settings.background.border_smooth_depth,
-                )
+        result = _finalize_frame(result, settings.background, resolved.mode)
     finally:
         if remover is not None:
             remover.close()

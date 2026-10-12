@@ -27,7 +27,8 @@ def remove_white_background(rgba: np.ndarray) -> np.ndarray:
 
 
 def add_comics_outline(
-    rgba: np.ndarray, *, fade_strength: float = 0.0, fade_depth: int = 1
+    rgba: np.ndarray, *, fade_strength: float = 0.0, fade_depth: int = 1,
+    darken_edge: bool = True,
 ) -> np.ndarray:
     """Darken just the inner, one-pixel silhouette edge after final resizing.
 
@@ -45,7 +46,8 @@ def add_comics_outline(
         Image.fromarray(silhouette.astype(np.uint8) * 255).filter(ImageFilter.MinFilter(3))
     ) > 0
     edge = silhouette & ~eroded
-    result[edge, :3] = np.rint(result[edge, :3].astype(np.float32) * 0.5).astype(np.uint8)
+    if darken_edge:
+        result[edge, :3] = np.rint(result[edge, :3].astype(np.float32) * 0.5).astype(np.uint8)
     strength = float(np.clip(fade_strength, 0.0, 1.0))
     depth = max(0, min(int(fade_depth), 16))
     if strength > 0 and depth > 0:
@@ -106,44 +108,54 @@ def tighten_drawn_matte(rgba: np.ndarray) -> np.ndarray:
     return result
 
 
-def draw_inner_border(
+def draw_outward_border(
     rgba: np.ndarray, *, width: int, color: tuple[int, int, int], smooth_depth: int = 0
 ) -> np.ndarray:
-    """Color only pixels inside the existing alpha silhouette; never expand it."""
+    """Composite a supersampled contour behind the asset, preserving opaque RGB."""
 
-    result = np.ascontiguousarray(rgba).copy()
-    current = result[..., 3] > 0
+    source = np.ascontiguousarray(rgba)
     width = max(0, min(int(width), 16))
-    if width == 0 or not np.any(current):
-        return result
-    border = np.zeros(current.shape, dtype=bool)
-    for _ in range(width):
-        padded = np.pad(current, 1, mode="constant")
-        inner = np.ones(current.shape, dtype=bool)
-        for y in range(3):
-            for x in range(3):
-                inner &= padded[y : y + current.shape[0], x : x + current.shape[1]]
-        border |= current & ~inner
-        current = inner
-        if not np.any(current):
-            break
-    color_array = np.asarray(color, dtype=np.float32)
-    result[..., :3][border] = color_array.astype(np.uint8)
-    smooth_depth = max(0, min(int(smooth_depth), 16))
-    for index in range(smooth_depth):
-        if not np.any(current):
-            break
-        padded = np.pad(current, 1, mode="constant")
-        inner = np.ones(current.shape, dtype=bool)
-        for y in range(3):
-            for x in range(3):
-                inner &= padded[y : y + current.shape[0], x : x + current.shape[1]]
-        ring = current & ~inner
-        border_weight = (smooth_depth - index) / (smooth_depth + 1)
-        original = rgba[..., :3][ring].astype(np.float32)
-        mixed = original * (1.0 - border_weight) + color_array * border_weight
-        result[..., :3][ring] = np.rint(mixed).astype(np.uint8)
-        current = inner
+    if width == 0 or not np.any(source[..., 3]):
+        return source.copy()
+
+    # A fixed transparent gutter prevents clipping when a character touches
+    # the canvas edge. It is the same size on every animation frame.
+    pad = width + 2
+    result = np.pad(source, ((pad, pad), (pad, pad), (0, 0)), mode="constant")
+    alpha = result[..., 3]
+    height, frame_width = alpha.shape
+    factor = 4
+    geometry_alpha = np.where(alpha >= 16, alpha, 0).astype(np.uint8)
+    mask = Image.fromarray(geometry_alpha, "L").resize(
+        (frame_width * factor, height * factor), Image.Resampling.BILINEAR
+    )
+    if smooth_depth:
+        mask = mask.filter(
+            ImageFilter.GaussianBlur(min(0.5, max(0, int(smooth_depth)) / 8) * factor)
+        )
+    expanded = mask.filter(ImageFilter.MaxFilter(2 * width * factor + 1))
+    if smooth_depth:
+        # Smooth only the *added geometry*. 1–16 maps to a subpixel feather
+        # of 0.125–1.0 output pixels; no asset RGB is blurred inward.
+        feather = min(1.0, max(0, int(smooth_depth)) / 16) * factor
+        expanded = expanded.filter(ImageFilter.GaussianBlur(feather))
+    expanded_alpha = np.asarray(
+        expanded.resize((frame_width, height), Image.Resampling.BOX), dtype=np.int16
+    )
+    border_alpha = np.maximum(expanded_alpha - alpha.astype(np.int16), 0).astype(np.float32) / 255
+    source_alpha = alpha.astype(np.float32) / 255
+    behind = border_alpha * (1 - source_alpha)
+    combined = source_alpha + behind
+    # Straight-alpha compositing keeps opaque artwork *exactly* unchanged and
+    # mixes the outline only where the original edge was semi-transparent.
+    affected = behind > 0
+    if np.any(affected):
+        original_rgb = result[..., :3][affected].astype(np.float32)
+        color_rgb = np.asarray(color, dtype=np.float32)
+        mixed = (original_rgb * source_alpha[affected, None]
+                 + color_rgb * behind[affected, None]) / combined[affected, None]
+        result[..., :3][affected] = np.rint(np.clip(mixed, 0, 255)).astype(np.uint8)
+        result[..., 3][affected] = np.rint(combined[affected] * 255).astype(np.uint8)
     return result
 
 

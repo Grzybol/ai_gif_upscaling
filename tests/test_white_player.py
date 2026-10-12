@@ -18,7 +18,7 @@ from midnight_upscale.video_export import composite_on_background
 from midnight_upscale.video_inspect import inspect_video
 from midnight_upscale.white_background import (
     add_comics_outline,
-    draw_inner_border,
+    draw_outward_border,
     force_remove_white_edges,
     remove_white_background,
     tighten_drawn_matte,
@@ -139,30 +139,32 @@ def test_tight_drawn_mode_resolves_separately() -> None:
     assert remove_background(resolved, frame)[0, 0, 3] == 0
 
 
-def test_inner_border_has_selected_color_and_stays_inside_alpha() -> None:
+def test_outward_border_has_selected_color_and_preserves_opaque_artwork() -> None:
     frame = np.zeros((11, 11, 4), dtype=np.uint8)
     frame[2:9, 2:9] = (180, 120, 60, 255)
     frame[2, 5, 3] = 128
-    result = draw_inner_border(frame, width=2, color=(10, 20, 200))
-    np.testing.assert_array_equal(result[..., 3], frame[..., 3])
-    assert tuple(result[2, 5, :3]) == (10, 20, 200)
-    assert tuple(result[3, 5, :3]) == (10, 20, 200)
-    assert tuple(result[4, 5, :3]) == (180, 120, 60)
-    assert tuple(result[1, 5]) == (0, 0, 0, 0)
+    result = draw_outward_border(frame, width=2, color=(10, 20, 200))
+    pad = 4
+    assert result.shape == (19, 19, 4)
+    np.testing.assert_array_equal(result[pad + 3:pad + 8, pad + 3:pad + 8],
+                                  frame[3:8, 3:8])
+    assert tuple(result[pad + 1, pad + 5, :3]) == (10, 20, 200)
+    assert result[pad + 1, pad + 5, 3] > 0
+    assert tuple(result[pad + 4, pad + 5]) == (180, 120, 60, 255)
+    assert tuple(result[0, 0]) == (0, 0, 0, 0)
 
 
-def test_inner_border_smoothing_blends_from_border_to_asset() -> None:
+def test_border_smoothing_changes_only_added_geometry() -> None:
     frame = np.zeros((15, 15, 4), dtype=np.uint8)
     frame[2:13, 2:13] = (200, 100, 40, 255)
-    result = draw_inner_border(
-        frame, width=2, color=(0, 0, 0), smooth_depth=2
-    )
-    assert tuple(result[2, 7, :3]) == (0, 0, 0)
-    assert tuple(result[3, 7, :3]) == (0, 0, 0)
-    assert tuple(result[4, 7, :3]) == (67, 33, 13)
-    assert tuple(result[5, 7, :3]) == (133, 67, 27)
-    assert tuple(result[6, 7, :3]) == (200, 100, 40)
-    np.testing.assert_array_equal(result[..., 3], frame[..., 3])
+    plain = draw_outward_border(frame, width=1, color=(0, 0, 0))
+    smooth = draw_outward_border(frame, width=1, color=(0, 0, 0), smooth_depth=4)
+    pad = 3
+    np.testing.assert_array_equal(smooth[pad + 2:pad + 13, pad + 2:pad + 13],
+                                  frame[2:13, 2:13])
+    assert np.any(plain[..., 3] != smooth[..., 3])
+    assert np.any((smooth[..., 3] > 0) & (smooth[..., 3] < 255) &
+                  (np.pad(frame[..., 3], pad) == 0))
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
@@ -179,9 +181,30 @@ def test_drawn_border_appears_in_preview_with_selected_background(tmp_path: Path
     _, mask, result, _ = preview_one_frame(inspect_video(source), settings, 0)
     border = np.all(result[..., :3] == (10, 20, 200), axis=2) & (mask > 0)
     assert np.any(border)
-    assert result[24, 24, 0] != 10
+    assert result[24 + 4, 24 + 4, 0] != 10
     composed = np.asarray(composite_on_background(result, "magenta"))
     assert tuple(composed[0, 0]) == (255, 0, 255)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_outward_border_preview_matches_exported_frame(tmp_path: Path) -> None:
+    frame = np.full((48, 48, 4), 255, dtype=np.uint8)
+    frame[8:40, 8:40, :3] = (160, 90, 45)
+    source = make_video(tmp_path / "outline.mp4", [frame, frame], fps=10)
+    settings = ConvertSettings(
+        background=BackgroundSettings(
+            mode="drawn_white", draw_border=True, border_width=1,
+            border_color=(0, 0, 0), border_smooth_depth=4,
+        ),
+        formats=("png_sequence",), output_dir=tmp_path / "out", work_dir=tmp_path / "work",
+        use_cache=False,
+    )
+    _, _, preview, _ = preview_one_frame(inspect_video(source), settings, 0)
+    result = convert_video(source, settings)
+    frames = sorted(result.outputs["png_sequence"][0].glob("*.png"))
+    with Image.open(frames[0]) as image:
+        np.testing.assert_array_equal(np.asarray(image.convert("RGBA")), preview)
+    assert preview.shape[:2] == (54, 54)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
