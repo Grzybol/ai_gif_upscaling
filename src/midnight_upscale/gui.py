@@ -309,13 +309,16 @@ def build_demo() -> gr.Blocks:
         raise PipelineError('Gradio is not installed. Install it with: pip install -e ".[gui]"')
     from midnight_upscale.gui_converter import build_converter_demo
     from midnight_upscale.gui_upscale import mount_upscale_tab
+    from midnight_upscale.gui_asset import mount_asset_tab
 
     with gr.Blocks(title="Midnight Upscale") as upscale:
         mount_upscale_tab()
+    with gr.Blocks(title="PNG Asset Prep") as asset_prep:
+        mount_asset_tab()
 
     return gr.TabbedInterface(
-        [upscale, build_converter_demo()],
-        ["UPSCALE", "VIDEO CONVERTER"],
+        [upscale, build_converter_demo(), asset_prep],
+        ["UPSCALE", "VIDEO CONVERTER", "PNG ASSET PREP"],
         title="Midnight Upscale",
     )
 
