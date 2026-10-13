@@ -255,8 +255,21 @@ through a lossy format.
   border, else AI Segmentation; the resolved choice is always shown), None,
   Chroma Key (soft alpha, spill suppression, edge cleanup), White background,
   AI Segmentation. White background removes near-white pixels even between leaves;
-  Drawn/comics + white background additionally darkens the one-pixel inner edge
-  after resizing to hide pale fringes around illustrated characters. Its optional
+  Drawn/comics + white background removes only exact RGB `#FFFFFF` from decoded
+  frames, then darkens the one-pixel inner edge after resizing. Lossy video
+  compression can turn white background pixels off-white, leaving them visible
+  in this exact-match mode. Drawn/comics + white background (legacy) restores
+  the earlier near-white keying with the same subtle inner outline, without
+  the clean-edge matte trim. The drawn/comics panel keeps the result preview,
+  source-color pipette with zoom, and protection brush together in tabs on the
+  left. The pipette samples decoded source RGB; optional one-line-per-rule colors:
+  `#FDFDFD` (exact), `#F8F8F8..#FFFFFF` (inclusive per-channel RGB range), or
+  `#FAFAFA +/- 3` (per-channel tolerance). A protection brush locks painted
+  source-frame pixels against background removal, forced white removal, and
+  finishing effects. The same fixed-position mask is used on every frame of
+  the first selected video; it does not follow a moving feature or carry over
+  to other videos in a batch. Load a source frame into the brush, paint, then
+  press Preview or Convert. Its optional
   edge transparency gradient has strength and inward depth controls (0% is off);
   any background mode can optionally force near-white edge pixels to transparent
   using a depth (pixels) and a darkest white shade (0–255) threshold. In None
@@ -264,11 +277,15 @@ through a lossy format.
   Drawn/comics + white background (clean edge) is a separate, stronger option
   that trims a color-contaminated outer pixel and reconstructs the new edge
   from the interior, including gold or skin-colored white spill;
-  both drawn/comics modes can optionally draw a chosen-color border 1–16 output
-  pixels inward from the silhouette. The mode panel includes a frame picker and
+  all three drawn/comics modes can optionally draw a chosen-color border 1–16 output
+  pixels outward from the alpha silhouette. Its 4× supersampled contour adds a
+  fixed transparent gutter and leaves opaque artwork RGB unchanged when smoothing
+  is off. The mode panel
+  includes a frame picker and
   preview on checkerboard, black, white, gray, magenta, or green;
-  the border can blend into the asset over a configurable number of pixels
-  measured inward from the border's inner edge. Multiple input videos can be
+  optional border transition control blends the chosen border color a short
+  distance inward from the silhouette edge without blurring artwork RGB.
+  Multiple input videos can be
   exported into one ZIP with a subdirectory for each video's output files;
   white foreground details may also become transparent.
 - **Frame rate:** Source keeps every frame and its own duration. Any other FPS is an
