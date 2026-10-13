@@ -26,19 +26,30 @@ def remove_white_background(rgba: np.ndarray) -> np.ndarray:
     return result
 
 
+def remove_exact_white_background(rgba: np.ndarray) -> np.ndarray:
+    """Key only RGB #FFFFFF, preserving every other pixel and source alpha."""
+
+    result = np.ascontiguousarray(rgba).copy()
+    pure_white = np.all(result[..., :3] == 255, axis=2)
+    result[pure_white] = 0
+    return result
+
+
 def add_comics_outline(
     rgba: np.ndarray, *, fade_strength: float = 0.0, fade_depth: int = 1,
-    darken_edge: bool = True,
+    darken_edge: bool = True, discard_faint_alpha: bool = True,
 ) -> np.ndarray:
     """Darken just the inner, one-pixel silhouette edge after final resizing.
 
     Keeping the original alpha avoids an opaque halo around antialiased details.
-    Very faint keyed pixels are removed so isolated white specks cannot survive.
+    Very faint keyed pixels can be removed to suppress isolated white specks;
+    exact-white keying preserves pre-existing source alpha instead.
     """
 
     result = np.ascontiguousarray(rgba).copy()
     alpha = result[..., 3]
-    alpha[alpha < 16] = 0
+    if discard_faint_alpha:
+        alpha[alpha < 16] = 0
     silhouette = alpha > 0
     if not np.any(silhouette):
         return result

@@ -79,6 +79,27 @@ def test_drawn_white_uses_white_key_with_separate_mode() -> None:
     assert outlined[5, 5, 0] == keyed[5, 5, 0]
 
 
+def test_drawn_white_keys_only_exact_rgb_white() -> None:
+    frame = np.array([[
+        [255, 255, 255, 255],
+        [255, 255, 254, 255],
+        [250, 250, 250, 255],
+        [255, 250, 250, 8],
+    ]], dtype=np.uint8)
+    drawn = resolve_background(
+        BackgroundSettings(mode="drawn_white"), has_alpha=False, sample_frames=[frame]
+    )
+    result = remove_background(drawn, frame)
+    np.testing.assert_array_equal(result[0, 0], (0, 0, 0, 0))
+    np.testing.assert_array_equal(result[0, 1:], frame[0, 1:])
+    outlined = add_comics_outline(result, discard_faint_alpha=False)
+    assert outlined[0, 3, 3] == 8
+    white = resolve_background(
+        BackgroundSettings(mode="white"), has_alpha=False, sample_frames=[frame]
+    )
+    assert remove_background(white, frame)[0, 2, 3] == 0
+
+
 def test_comics_gradient_fades_alpha_inward_by_depth() -> None:
     frame = np.zeros((11, 11, 4), dtype=np.uint8)
     frame[2:9, 2:9] = (120, 80, 40, 255)

@@ -27,7 +27,7 @@ from midnight_upscale.segmentation import (
     create_remover,
 )
 from midnight_upscale.utils import PipelineError
-from midnight_upscale.white_background import remove_white_background
+from midnight_upscale.white_background import remove_exact_white_background, remove_white_background
 
 MODES = ("auto", "none", "chroma", "white", "drawn_white", "drawn_white_tight", "ai")
 MODE_LABELS = {
@@ -118,7 +118,7 @@ def resolve_background(
         return ResolvedBackground(
             RESOLVED_DRAWN_WHITE,
             "DRAWN/COMICS + WHITE BACKGROUND",
-            "White background is removed, then a subtle 1 px inner outline is applied.",
+            "Only exact RGB #FFFFFF is keyed, then a subtle 1 px inner outline is applied.",
         )
 
     if mode == "drawn_white_tight":
@@ -199,7 +199,9 @@ def remove_background(
     if resolved.mode == RESOLVED_CHROMA:
         assert resolved.chroma is not None
         keyed = chroma_key(rgba[..., :3], resolved.chroma)
-    elif resolved.mode in {RESOLVED_WHITE, RESOLVED_DRAWN_WHITE, RESOLVED_DRAWN_WHITE_TIGHT}:
+    elif resolved.mode == RESOLVED_DRAWN_WHITE:
+        return remove_exact_white_background(rgba)
+    elif resolved.mode in {RESOLVED_WHITE, RESOLVED_DRAWN_WHITE_TIGHT}:
         # This function multiplies the source alpha itself.
         return remove_white_background(rgba)
     elif resolved.mode == RESOLVED_AI:

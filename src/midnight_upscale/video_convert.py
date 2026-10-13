@@ -92,7 +92,7 @@ CONVERTER_STAGES: tuple[str, ...] = (
     STAGE_FINISHED,
 )
 
-CACHE_VERSION = 4  # inward border smoothing changes finalized frames
+CACHE_VERSION = 5  # drawn/comics now keys only exact RGB white
 REVIEW_SAMPLES = 12
 PREVIEW_MIN_EVERY = 3
 PREVIEW_MAX_EVERY = 10
@@ -829,6 +829,7 @@ def _finalize_frame(
             rgba, fade_strength=background.comics_fade_strength,
             fade_depth=background.comics_fade_depth,
             darken_edge=not draw_border,
+            discard_faint_alpha=resolved_mode != "drawn_white",
         )
         if draw_border:
             rgba = draw_outward_border(

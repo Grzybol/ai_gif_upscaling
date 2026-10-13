@@ -351,7 +351,8 @@ def build_converter_tab() -> None:
             "None": "No background removal. Frames are used as decoded.",
             "White background": "Removes near-white pixels, including gaps between fine leaves.",
             "Drawn/comics + white background": (
-                "Removes white, adds a subtle 1 px dark outline, and optionally fades edge alpha."
+                "Removes only exact RGB #FFFFFF from decoded frames, then adds a subtle "
+                "1 px dark outline. MP4 compression may leave off-white background pixels."
             ),
             "Drawn/comics + white background (clean edge)": (
                 "Also trims the contaminated outer pixel and rebuilds edge color from inside."

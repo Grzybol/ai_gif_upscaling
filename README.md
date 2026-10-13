@@ -255,8 +255,10 @@ through a lossy format.
   border, else AI Segmentation; the resolved choice is always shown), None,
   Chroma Key (soft alpha, spill suppression, edge cleanup), White background,
   AI Segmentation. White background removes near-white pixels even between leaves;
-  Drawn/comics + white background additionally darkens the one-pixel inner edge
-  after resizing to hide pale fringes around illustrated characters. Its optional
+  Drawn/comics + white background removes only exact RGB `#FFFFFF` from decoded
+  frames, then darkens the one-pixel inner edge after resizing. Lossy video
+  compression can turn white background pixels off-white, leaving them visible
+  in this exact-match mode. Its optional
   edge transparency gradient has strength and inward depth controls (0% is off);
   any background mode can optionally force near-white edge pixels to transparent
   using a depth (pixels) and a darkest white shade (0–255) threshold. In None
