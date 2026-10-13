@@ -258,8 +258,9 @@ through a lossy format.
   Drawn/comics + white background removes only exact RGB `#FFFFFF` from decoded
   frames, then darkens the one-pixel inner edge after resizing. Lossy video
   compression can turn white background pixels off-white, leaving them visible
-  in this exact-match mode. The drawn/comics panel provides a pipette on the
-  original and zoomed previews, plus optional one-line-per-rule colors:
+  in this exact-match mode. The drawn/comics panel keeps the result preview,
+  source-color pipette with zoom, and protection brush together in tabs on the
+  left. The pipette samples decoded source RGB; optional one-line-per-rule colors:
   `#FDFDFD` (exact), `#F8F8F8..#FFFFFF` (inclusive per-channel RGB range), or
   `#FAFAFA +/- 3` (per-channel tolerance). A protection brush locks painted
   source-frame pixels against background removal, forced white removal, and
