@@ -33,13 +33,17 @@ from midnight_upscale.manual_key import (
 from midnight_upscale.utils import PipelineError
 from midnight_upscale.white_background import remove_exact_white_background, remove_white_background
 
-MODES = ("auto", "none", "chroma", "white", "drawn_white", "drawn_white_tight", "ai")
+MODES = (
+    "auto", "none", "chroma", "white", "drawn_white", "drawn_white_legacy",
+    "drawn_white_tight", "ai",
+)
 MODE_LABELS = {
     "Auto": "auto",
     "None": "none",
     "Chroma Key": "chroma",
     "White background": "white",
     "Drawn/comics + white background": "drawn_white",
+    "Drawn/comics + white background (legacy)": "drawn_white_legacy",
     "Drawn/comics + white background (clean edge)": "drawn_white_tight",
     "AI Segmentation": "ai",
 }
@@ -50,6 +54,7 @@ RESOLVED_NONE = "none"
 RESOLVED_CHROMA = "chroma"
 RESOLVED_WHITE = "white"
 RESOLVED_DRAWN_WHITE = "drawn_white"
+RESOLVED_DRAWN_WHITE_LEGACY = "drawn_white_legacy"
 RESOLVED_DRAWN_WHITE_TIGHT = "drawn_white_tight"
 RESOLVED_AI = "ai"
 
@@ -129,6 +134,15 @@ def resolve_background(
             RESOLVED_DRAWN_WHITE,
             "DRAWN/COMICS + WHITE BACKGROUND",
             "Only exact RGB #FFFFFF is keyed, then a subtle 1 px inner outline is applied.",
+            manual_colors=settings.manual_colors,
+            protection_mask=_mask_for_source(settings, source_path),
+        )
+
+    if mode == "drawn_white_legacy":
+        return ResolvedBackground(
+            RESOLVED_DRAWN_WHITE_LEGACY,
+            "DRAWN/COMICS + WHITE BACKGROUND (LEGACY)",
+            "Near-white pixels are keyed, then a subtle 1 px inner outline is applied.",
             manual_colors=settings.manual_colors,
             protection_mask=_mask_for_source(settings, source_path),
         )
@@ -224,7 +238,9 @@ def remove_background(
         keyed = chroma_key(rgba[..., :3], resolved.chroma)
     elif resolved.mode == RESOLVED_DRAWN_WHITE:
         keyed = remove_exact_white_background(rgba)
-    elif resolved.mode in {RESOLVED_WHITE, RESOLVED_DRAWN_WHITE_TIGHT}:
+    elif resolved.mode in {
+        RESOLVED_WHITE, RESOLVED_DRAWN_WHITE_LEGACY, RESOLVED_DRAWN_WHITE_TIGHT,
+    }:
         # This function multiplies the source alpha itself.
         keyed = remove_white_background(rgba)
     elif resolved.mode == RESOLVED_AI:
@@ -241,7 +257,9 @@ def remove_background(
         keyed[..., 3] = mask
     else:  # pragma: no cover - guarded by resolve_background
         raise PipelineError(f"Unknown resolved mode {resolved.mode!r}")
-    if resolved.mode in {RESOLVED_DRAWN_WHITE, RESOLVED_DRAWN_WHITE_TIGHT}:
+    if resolved.mode in {
+        RESOLVED_DRAWN_WHITE, RESOLVED_DRAWN_WHITE_LEGACY, RESOLVED_DRAWN_WHITE_TIGHT,
+    }:
         keyed = remove_selected_colors(keyed, rgba, resolved.manual_colors)
         protection = load_painted_mask(resolved.protection_mask) if resolved.protection_mask else None
         keyed = restore_protected_pixels(keyed, rgba, protection)

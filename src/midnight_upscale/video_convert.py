@@ -849,7 +849,7 @@ def _finalize_frame(
         from midnight_upscale.white_background import tighten_drawn_matte
 
         rgba = tighten_drawn_matte(rgba)
-    if resolved_mode in {"drawn_white", "drawn_white_tight"}:
+    if resolved_mode in {"drawn_white", "drawn_white_legacy", "drawn_white_tight"}:
         from midnight_upscale.white_background import add_comics_outline, draw_outward_border
 
         draw_border = background.draw_border

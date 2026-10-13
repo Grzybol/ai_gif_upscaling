@@ -100,6 +100,28 @@ def test_drawn_white_keys_only_exact_rgb_white() -> None:
     assert remove_background(white, frame)[0, 2, 3] == 0
 
 
+def test_legacy_drawn_white_restores_near_white_key_and_outline() -> None:
+    frame = np.full((9, 9, 4), 255, dtype=np.uint8)
+    frame[..., :3] = (250, 250, 250)
+    frame[2:7, 2:7, :3] = (160, 40, 25)
+    legacy = resolve_background(
+        BackgroundSettings(mode="drawn_white_legacy"),
+        has_alpha=False, sample_frames=[frame],
+    )
+    exact = resolve_background(
+        BackgroundSettings(mode="drawn_white"),
+        has_alpha=False, sample_frames=[frame],
+    )
+    legacy_keyed = remove_background(legacy, frame)
+    exact_keyed = remove_background(exact, frame)
+    assert legacy.mode == "drawn_white_legacy"
+    assert legacy_keyed[0, 0, 3] == 0
+    assert exact_keyed[0, 0, 3] == 255
+    outlined = add_comics_outline(legacy_keyed)
+    assert outlined[2, 4, 0] < legacy_keyed[2, 4, 0]
+    assert outlined[4, 4, 0] == legacy_keyed[4, 4, 0]
+
+
 def test_comics_gradient_fades_alpha_inward_by_depth() -> None:
     frame = np.zeros((11, 11, 4), dtype=np.uint8)
     frame[2:9, 2:9] = (120, 80, 40, 255)

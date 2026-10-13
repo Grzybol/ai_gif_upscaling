@@ -205,7 +205,9 @@ def settings_from_form(
         edge_cleanup=edge_cleanup if edge_cleanup in EDGE_CLEANUP_LEVELS else "Light",
         hard_mask=bool(hard_mask),
     )
-    drawn_mode = MODE_LABELS.get(background_mode, "auto") in {"drawn_white", "drawn_white_tight"}
+    drawn_mode = MODE_LABELS.get(background_mode, "auto") in {
+        "drawn_white", "drawn_white_legacy", "drawn_white_tight",
+    }
     background = BackgroundSettings(
         mode=MODE_LABELS.get(background_mode, "auto"),
         comics_fade_strength=float(comics_fade_strength) / 100.0,

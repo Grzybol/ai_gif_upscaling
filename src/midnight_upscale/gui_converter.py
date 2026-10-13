@@ -413,6 +413,10 @@ def build_converter_tab() -> None:
                 "Removes only exact RGB #FFFFFF from decoded frames, then adds a subtle "
                 "1 px dark outline. MP4 compression may leave off-white background pixels."
             ),
+            "Drawn/comics + white background (legacy)": (
+                "Restores the original drawn/comics behavior: removes near-white shades "
+                "and adds a subtle 1 px dark outline."
+            ),
             "Drawn/comics + white background (clean edge)": (
                 "Also trims the contaminated outer pixel and rebuilds edge color from inside."
             ),

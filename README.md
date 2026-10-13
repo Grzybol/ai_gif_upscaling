@@ -258,7 +258,9 @@ through a lossy format.
   Drawn/comics + white background removes only exact RGB `#FFFFFF` from decoded
   frames, then darkens the one-pixel inner edge after resizing. Lossy video
   compression can turn white background pixels off-white, leaving them visible
-  in this exact-match mode. The drawn/comics panel keeps the result preview,
+  in this exact-match mode. Drawn/comics + white background (legacy) restores
+  the earlier near-white keying with the same subtle inner outline, without
+  the clean-edge matte trim. The drawn/comics panel keeps the result preview,
   source-color pipette with zoom, and protection brush together in tabs on the
   left. The pipette samples decoded source RGB; optional one-line-per-rule colors:
   `#FDFDFD` (exact), `#F8F8F8..#FFFFFF` (inclusive per-channel RGB range), or
@@ -275,7 +277,7 @@ through a lossy format.
   Drawn/comics + white background (clean edge) is a separate, stronger option
   that trims a color-contaminated outer pixel and reconstructs the new edge
   from the interior, including gold or skin-colored white spill;
-  both drawn/comics modes can optionally draw a chosen-color border 1–16 output
+  all three drawn/comics modes can optionally draw a chosen-color border 1–16 output
   pixels outward from the alpha silhouette. Its 4× supersampled contour adds a
   fixed transparent gutter and leaves opaque artwork RGB unchanged when smoothing
   is off. The mode panel
