@@ -87,6 +87,13 @@ def test_form_values_are_translated() -> None:
     assert settings.end_sec == 2.5
 
 
+def test_legacy_drawn_mode_is_available_in_converter_form() -> None:
+    settings = logic.settings_from_form(
+        **_form(background_mode="Drawn/comics + white background (legacy)")
+    )
+    assert settings.background.mode == "drawn_white_legacy"
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

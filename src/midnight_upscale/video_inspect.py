@@ -15,7 +15,7 @@ from typing import Any
 
 from midnight_upscale.utils import PipelineError, require_binary, tail_text
 
-VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm", ".gif")
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm", ".gif", ".zip")
 
 # Pixel formats that carry an alpha plane.
 ALPHA_PIX_FMTS = frozenset(
@@ -247,6 +247,10 @@ def inspect_video(
     path = Path(path)
     if not path.is_file():
         raise PipelineError(f"Input file not found: {path}")
+    if path.suffix.lower() == ".zip":
+        from midnight_upscale.spritesheet_input import inspect_spritesheet
+
+        return inspect_spritesheet(path)
     if not any_extension and path.suffix.lower() not in VIDEO_EXTENSIONS:
         allowed = ", ".join(VIDEO_EXTENSIONS)
         raise PipelineError(f"{path.name} is not a supported input ({allowed})")

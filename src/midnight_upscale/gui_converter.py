@@ -6,7 +6,11 @@ Separate from the SeedVR2 upscale page. It runs without ComfyUI.
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
+
+import numpy as np
+from PIL import Image
 
 try:
     import gradio as gr
@@ -33,6 +37,7 @@ SETTING_KEYS = (
     "edge_cleanup", "hard_mask", "sample_key", "comics_fade_strength",
     "comics_fade_depth", "draw_border", "border_width", "border_color",
     "smooth_border", "border_smooth_depth",
+    "manual_colors", "protect_editor", "protect_source",
     "force_white_removal", "force_white_depth",
     "force_white_shade", "ai_backend", "ai_model", "temporal", "crop",
     "padding", "center", "resize", "resize_width", "resize_height", "keep_aspect", "formats",
@@ -58,13 +63,13 @@ def build_converter_tab() -> None:
 
     gr.Markdown("## Video Converter / Background Removal")
     gr.Markdown(
-        "Turn an MP4, MOV, WebM or GIF into transparent runtime assets: WebM alpha, "
+        "Turn an MP4, MOV, WebM, GIF or spritesheet ZIP into transparent runtime assets: WebM alpha, "
         "APNG, GIF preview, PNG frames or a spritesheet. Works without ComfyUI."
     )
     with gr.Row():
         with gr.Column():
             uploads = gr.File(
-                label="Input video",
+                label="Input video or spritesheet ZIP",
                 file_count="multiple",
                 file_types=list(VIDEO_EXTENSIONS),
                 type="filepath",
@@ -96,6 +101,14 @@ def build_converter_tab() -> None:
                 )
                 mode_note = gr.Markdown("")
                 with gr.Group(visible=False) as comics_group:
+                    manual_colors = gr.Textbox(
+                        label="Extra colors / RGB ranges to remove", lines=4,
+                        placeholder="#FDFDFD\n#F8F8F8..#FFFFFF\n#FAFAFA +/- 3",
+                        info=(
+                            "Optional, one rule per line. Exact color, inclusive per-channel "
+                            "range, or +/- tolerance. Click the source preview to sample a color."
+                        ),
+                    )
                     comics_fade_strength = gr.Slider(
                         label="Edge transparency gradient (%)", minimum=0, maximum=100,
                         step=1, value=0,
@@ -109,18 +122,19 @@ def build_converter_tab() -> None:
                     draw_border = gr.Checkbox(label="Draw black border", value=False)
                     with gr.Group(visible=False) as border_group:
                         border_width = gr.Slider(
-                            label="Inner border thickness (px)", minimum=1, maximum=16,
+                            label="Outward border thickness (px)", minimum=1, maximum=16,
                             step=1, value=1,
-                            info="Drawn inward; the exported silhouette does not grow.",
+                            info="Drawn outside the alpha silhouette; adds a small transparent gutter.",
                         )
                         border_color = gr.ColorPicker(label="Border color", value="#000000")
                         smooth_border = gr.Checkbox(
                             label="Smooth border transition", value=False,
-                            info="Blend the inner border edge into the asset color.",
+                            info="Blend the border color gently into the asset, starting at its inner edge.",
                         )
                         border_smooth_depth = gr.Slider(
-                            label="Smoothing depth inward (px)", minimum=1, maximum=16,
+                            label="Outline contour smoothing", minimum=1, maximum=16,
                             step=1, value=2, visible=False,
+                            info="Transition depth inward from the outline, in output pixels.",
                         )
                     gr.Markdown("Preview this mode")
                     comics_frame = gr.Slider(
@@ -132,9 +146,47 @@ def build_converter_tab() -> None:
                         choices=logic.PREVIEW_BACKGROUNDS, value="checkerboard",
                     )
                     comics_preview_button = gr.Button("Preview selected frame")
-                    comics_preview_image = gr.Image(
-                        label="Comics result preview", interactive=False,
-                    )
+                    with gr.Tabs():
+                        with gr.Tab("Result"):
+                            comics_preview_image = gr.Image(
+                                label="Comics result preview", interactive=False,
+                            )
+                        with gr.Tab("Pipette"):
+                            gr.Markdown(
+                                "Click the decoded source frame to sample its real RGB color. "
+                                "At 1×, click a point before zooming in to center the view there."
+                            )
+                            original_zoom = gr.Slider(
+                                label="Source zoom", minimum=1, maximum=8, step=1, value=1,
+                            )
+                            zoom_image = gr.Image(
+                                label="Source frame — click to sample color", interactive=False,
+                            )
+                            sampled_color = gr.Textbox(label="Sampled RGB", interactive=False)
+                            add_sampled_color = gr.Button("Add sampled color to removal list")
+                        with gr.Tab("Paint protected area"):
+                            gr.Markdown(
+                                "Load the selected source frame, then paint over details to "
+                                "keep (for example teeth and eyes). The fixed-position mask "
+                                "protects those pixels in every frame of the first selected "
+                                "video. Use the eraser to correct strokes. Loading another "
+                                "frame clears the paint."
+                            )
+                            load_brush_frame = gr.Button("Load selected frame into brush")
+                            protect_editor = gr.ImageEditor(
+                                label="Paint protected pixels", type="numpy", sources=[],
+                                brush=gr.Brush(
+                                    default_size=12, colors=[("#00b7ff", 0.55)],
+                                    default_color=("#00b7ff", 0.55), color_mode="fixed",
+                                ),
+                                eraser=gr.Eraser(default_size=12),
+                                transforms=[],
+                                layers=gr.LayerOptions(
+                                    allow_additional_layers=False, layers=["Protected area"],
+                                ),
+                                height=600,
+                            )
+                            protection_note = gr.Markdown("")
                     comics_preview_note = gr.Markdown("")
                 force_white_removal = gr.Checkbox(
                     label="Forced removal of white pixels", value=False,
@@ -308,7 +360,10 @@ def build_converter_tab() -> None:
                 preview_button = gr.Button("Preview frame", scale=1)
             preview_note = gr.Markdown("")
             with gr.Row():
-                original_image = gr.Image(label="ORIGINAL", interactive=False)
+                with gr.Column():
+                    original_image = gr.Image(
+                        label="ORIGINAL", interactive=False,
+                    )
                 mask_image = gr.Image(label="MASK", interactive=False)
                 result_image = gr.Image(label="TRANSPARENT RESULT", interactive=False)
 
@@ -328,10 +383,15 @@ def build_converter_tab() -> None:
             )
 
     view_state = gr.State({})
+    protect_source = gr.State("")
+    comics_source_path = gr.State("")
+    zoom_center = gr.State(None)
+    zoom_meta = gr.State({})
     setting_inputs = [
         start, end, fps, background_mode, key_color, tolerance, softness, spill, edge_cleanup,
         hard_mask, sample_key, comics_fade_strength, comics_fade_depth,
         draw_border, border_width, border_color, smooth_border, border_smooth_depth,
+        manual_colors, protect_editor, protect_source,
         force_white_removal, force_white_depth, force_white_shade,
         ai_backend, ai_model, temporal, crop, padding, center, resize,
         resize_width, resize_height, keep_aspect, formats, sheet_columns, sheet_padding,
@@ -350,7 +410,12 @@ def build_converter_tab() -> None:
             "None": "No background removal. Frames are used as decoded.",
             "White background": "Removes near-white pixels, including gaps between fine leaves.",
             "Drawn/comics + white background": (
-                "Removes white, adds a subtle 1 px dark outline, and optionally fades edge alpha."
+                "Removes only exact RGB #FFFFFF from decoded frames, then adds a subtle "
+                "1 px dark outline. MP4 compression may leave off-white background pixels."
+            ),
+            "Drawn/comics + white background (legacy)": (
+                "Restores the original drawn/comics behavior: removes near-white shades "
+                "and adds a subtle 1 px dark outline."
             ),
             "Drawn/comics + white background (clean edge)": (
                 "Also trims the contaminated outer pixel and rebuilds edge color from inside."
@@ -360,6 +425,73 @@ def build_converter_tab() -> None:
             gr.update(visible=chroma_on), gr.update(visible=ai_on),
             gr.update(visible=mode.startswith("Drawn/comics + white background")), note,
         )
+
+    def zoom_original(
+        original_path: str, factor: float, center: object,
+    ) -> tuple[np.ndarray | None, dict[str, int]]:
+        if not original_path or not Path(original_path).is_file():
+            return None, {}
+        source = np.asarray(Image.open(original_path).convert("RGB"))
+        height, width = source.shape[:2]
+        scale = max(1, int(factor))
+        crop_width = math.ceil(width / scale)
+        crop_height = math.ceil(height / scale)
+        point = center if isinstance(center, (tuple, list)) and len(center) == 2 else None
+        cx, cy = (int(point[0]), int(point[1])) if point else (width // 2, height // 2)
+        left = max(0, min(cx - crop_width // 2, width - crop_width))
+        top = max(0, min(cy - crop_height // 2, height - crop_height))
+        image = Image.fromarray(source).crop(
+            (left, top, left + crop_width, top + crop_height)
+        ).resize((width, height), Image.Resampling.NEAREST)
+        return np.asarray(image), {
+            "left": left, "top": top, "crop_width": crop_width,
+            "crop_height": crop_height, "width": width, "height": height,
+        }
+
+    def sample_zoomed(
+        original_path: str, meta: dict[str, int], evt: gr.SelectData,
+    ) -> tuple[str, tuple[int, int] | None]:
+        if (not original_path or not Path(original_path).is_file() or not meta
+                or not isinstance(evt.index, (tuple, list))):
+            return "", None
+        image = np.asarray(Image.open(original_path).convert("RGB"))
+        x = meta["left"] + int(int(evt.index[0]) * meta["crop_width"] / meta["width"])
+        y = meta["top"] + int(int(evt.index[1]) * meta["crop_height"] / meta["height"])
+        x = max(0, min(x, image.shape[1] - 1))
+        y = max(0, min(y, image.shape[0] - 1))
+        rgb = image[y, x, :3]
+        return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}", (x, y)
+
+    def add_sample(color: str, rules: str) -> str:
+        if not color.startswith("#"):
+            return rules or ""
+        lines = [line.strip() for line in (rules or "").splitlines() if line.strip()]
+        if color not in lines:
+            lines.append(color)
+        return "\n".join(lines)
+
+    def load_protection_frame(
+        position: float, uploaded: object, start_v: object, end_v: object, fps_v: object,
+    ) -> tuple[object, str, str]:
+        paths = coerce_upload_paths(uploaded)
+        if not paths:
+            return None, "", "Choose a video first."
+        try:
+            from midnight_upscale.video_decode import decode_single_frame
+
+            info = logic.cached_info(paths[0])
+            plan = _plan(info, start_v, end_v, fps_v)
+            index = max(0, min(int(position), plan.count - 1))
+            original = np.asarray(decode_single_frame(info, plan.source_indices[index]))
+            image = Image.fromarray(original).convert("RGBA")
+            return {
+                "background": image, "layers": [], "composite": image,
+            }, str(paths[0].resolve()), (
+                f"Loaded frame {index + 1}. Paint protected pixels, then preview or convert. "
+                "The fixed-position mask applies to all frames of this video."
+            )
+        except (PipelineError, ValueError) as exc:
+            return None, "", str(exc)
 
     def on_backend(backend: str) -> str:
         return _panel(logic.ai_status_text(backend))
@@ -380,14 +512,14 @@ def build_converter_tab() -> None:
     def preview_comics(position: float, uploaded: object, *values: object):
         paths = coerce_upload_paths(uploaded)
         if not paths:
-            return None, "Choose a video first."
+            return None, "", "Choose a video first."
         try:
             settings = _settings(values[:-1])
             logic.set_preview_background(str(values[-1]))
             images, note = logic.preview_frame(paths[0], settings, int(position), run_ai=False)
-            return images[2], note
+            return images[2], images[0], note
         except (PipelineError, ValueError) as exc:
-            return None, str(exc)
+            return None, "", str(exc)
 
     def on_resize(choice: str) -> tuple[object, object, object]:
         custom = choice == "Custom"
@@ -436,7 +568,7 @@ def build_converter_tab() -> None:
             shown = (*images, note)
         except PipelineError as exc:
             shown = (None, None, None, str(exc))
-        video = str(first) if first.suffix.lower() != ".gif" else None
+        video = str(first) if first.suffix.lower() not in {".gif", ".zip"} else None
         return (
             _panel(format_video_card(info) + extra),
             video,
@@ -669,6 +801,39 @@ def build_converter_tab() -> None:
         ],
     )  # fmt: skip
     uploads.change(
+        lambda: (None, "", "", None, None, ""),
+        outputs=[
+            protect_editor, protect_source, protection_note, zoom_center,
+            comics_preview_image, comics_source_path,
+        ],
+    )
+    comics_source_path.change(
+        zoom_original,
+        inputs=[comics_source_path, original_zoom, zoom_center],
+        outputs=[zoom_image, zoom_meta],
+    )
+    original_zoom.change(
+        zoom_original,
+        inputs=[comics_source_path, original_zoom, zoom_center],
+        outputs=[zoom_image, zoom_meta],
+    )
+    zoom_center.change(
+        zoom_original,
+        inputs=[comics_source_path, original_zoom, zoom_center],
+        outputs=[zoom_image, zoom_meta],
+    )
+    zoom_image.select(
+        sample_zoomed, inputs=[comics_source_path, zoom_meta],
+        outputs=[sampled_color, zoom_center],
+    )
+    add_sampled_color.click(
+        add_sample, inputs=[sampled_color, manual_colors], outputs=[manual_colors],
+    )
+    load_brush_frame.click(
+        load_protection_frame, inputs=[comics_frame, uploads, start, end, fps],
+        outputs=[protect_editor, protect_source, protection_note],
+    )
+    uploads.change(
         update_comics_frame, inputs=[uploads, start, end, fps], outputs=[comics_frame]
     )
     for control in (start, end, fps):
@@ -681,7 +846,7 @@ def build_converter_tab() -> None:
             update_comics_frame, inputs=[uploads, start, end, fps], outputs=[comics_frame]
         )
     comics_preview_inputs = [comics_frame, uploads, *setting_inputs, comics_background]
-    comics_preview_outputs = [comics_preview_image, comics_preview_note]
+    comics_preview_outputs = [comics_preview_image, comics_source_path, comics_preview_note]
     comics_preview_button.click(
         preview_comics, inputs=comics_preview_inputs, outputs=comics_preview_outputs
     )

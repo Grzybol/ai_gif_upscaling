@@ -154,6 +154,24 @@ def decode_plan(
     use are discarded, and a frame the plan repeats is copied.
     """
 
+    if info.path.suffix.lower() == ".zip":
+        from midnight_upscale.spritesheet_input import SpritesheetArchive
+
+        if destination.exists():
+            shutil.rmtree(destination)
+        destination.mkdir(parents=True)
+        outputs = []
+        with SpritesheetArchive(info.path) as sheet:
+            for out_index, source_index in enumerate(plan.source_indices):
+                checkpoint()
+                target = frame_path(destination, out_index)
+                sheet.frame(source_index).save(target)
+                outputs.append(target)
+                report("Decode video", frames_done=out_index + 1,
+                       frames_total=plan.count, frames_kind="completed",
+                       message=f"Unpacking spritesheet frame {out_index + 1} / {plan.count}")
+        return outputs
+
     ffmpeg = require_binary("ffmpeg")
     low, high = min(plan.source_indices), max(plan.source_indices)
     expected = high - low + 1
@@ -223,6 +241,11 @@ def decode_single_frame(info: VideoInfo, index: int) -> Image.Image:
 
     if not 0 <= index < info.frame_count:
         raise PipelineError(f"Frame {index} is outside 0..{info.frame_count - 1}")
+    if info.path.suffix.lower() == ".zip":
+        from midnight_upscale.spritesheet_input import SpritesheetArchive
+
+        with SpritesheetArchive(info.path) as sheet:
+            return sheet.frame(index)
     command = [
         require_binary("ffmpeg"),
         "-v",
