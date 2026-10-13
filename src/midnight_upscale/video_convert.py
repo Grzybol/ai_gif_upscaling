@@ -32,6 +32,7 @@ from midnight_upscale.background import (
     resolve_background,
 )
 from midnight_upscale.browser_player import make_browser_player
+from midnight_upscale.manual_key import load_painted_mask
 from midnight_upscale.mask_temporal import get_level, smooth_masks
 from midnight_upscale.progress import JobCancelled, checkpoint, report, stamp_log
 from midnight_upscale.spritesheet import SpritesheetSettings, plan_spritesheet
@@ -58,6 +59,7 @@ from midnight_upscale.video_export import (
 )
 from midnight_upscale.video_inspect import VideoInfo, inspect_video
 from midnight_upscale.video_transform import (
+    CropPlan,
     ResizeSettings,
     alpha_bbox,
     apply_crop,
@@ -92,7 +94,7 @@ CONVERTER_STAGES: tuple[str, ...] = (
     STAGE_FINISHED,
 )
 
-CACHE_VERSION = 5  # drawn/comics now keys only exact RGB white
+CACHE_VERSION = 6  # user color ranges and painted protection change processed frames
 REVIEW_SAMPLES = 12
 PREVIEW_MIN_EVERY = 3
 PREVIEW_MAX_EVERY = 10
@@ -569,7 +571,8 @@ def _process_frames(
     sample_ids = sorted({0, total // 2, total - 1})
     samples = [read_rgba(decoded[i]) for i in sample_ids]
     resolved = resolve_background(
-        settings.background, has_alpha=info.has_alpha, sample_frames=samples
+        settings.background, has_alpha=info.has_alpha, sample_frames=samples,
+        source_path=source,
     )
     obs.background_label = resolved.label
     obs.background_reason = resolved.reason
@@ -589,12 +592,13 @@ def _process_frames(
 
     # 6. Crop / pad
     current = keyed
-    current = _crop(current, workdir / "3_cropped", settings, obs)
+    current, crop_plan = _crop(current, workdir / "3_cropped", settings, obs)
 
     # 7. Resize (also cleans the color under fully transparent pixels)
     final, transparent = _finalize(
         current, workdir / "4_final", settings.resize, obs,
         background=settings.background, resolved_mode=resolved.mode,
+        protection=_transformed_protection(resolved.protection_mask, crop_plan),
     )
     with Image.open(final[0]) as probe:
         size = probe.size
@@ -697,7 +701,7 @@ def _stabilize(
 
 def _crop(
     frames: list[Path], destination: Path, settings: ConvertSettings, obs: RunObserver
-) -> list[Path]:
+) -> tuple[list[Path], CropPlan | None]:
     total = len(frames)
     if not settings.crop:
         obs.skipped.add(STAGE_CROP)
@@ -709,7 +713,7 @@ def _crop(
             frames_total=total,
             frames_kind="completed",
         )
-        return frames
+        return frames, None
     destination.mkdir()
     report(
         STAGE_CROP,
@@ -756,12 +760,24 @@ def _crop(
             frames_total=2 * total,
             frames_kind="completed",
         )
-    return out
+    return out, plan
+
+
+def _transformed_protection(path: str, crop_plan: CropPlan | None) -> np.ndarray | None:
+    if not path:
+        return None
+    mask = load_painted_mask(path)
+    if crop_plan is None:
+        return mask
+    rgba = np.zeros((*mask.shape, 4), dtype=np.uint8)
+    rgba[..., 3] = mask.astype(np.uint8) * 255
+    return apply_crop(rgba, crop_plan)[..., 3] > 0
 
 
 def _finalize(
     frames: list[Path], destination: Path, resize: ResizeSettings, obs: RunObserver,
     *, background: BackgroundSettings, resolved_mode: str,
+    protection: np.ndarray | None = None,
 ) -> tuple[list[Path], bool]:
     """Resize (when asked), clean transparent-pixel color, and write the final frames."""
 
@@ -770,6 +786,14 @@ def _finalize(
     with Image.open(frames[0]) as probe:
         width, height = probe.size
     size = target_size(width, height, resize)
+    if protection is not None and protection.shape != (height, width):
+        raise PipelineError("Protection mask size differs from the cropped video frame.")
+    if protection is not None and resize.active:
+        protection = np.asarray(
+            Image.fromarray(protection.astype(np.uint8) * 255, "L").resize(
+                size, Image.Resampling.NEAREST
+            )
+        ) > 0
     if not resize.active:
         obs.skipped.add(STAGE_RESIZE)
         obs.say("Resize skipped (source size kept)")
@@ -789,7 +813,7 @@ def _finalize(
         rgba = read_rgba(path)
         if resize.active:
             rgba = resize_rgba(rgba, size)
-        rgba = _finalize_frame(rgba, background, resolved_mode)
+        rgba = _finalize_frame(rgba, background, resolved_mode, protection=protection)
         if np.any(rgba[..., 3] < 255):
             transparent = True
         target = frame_path(destination, index)
@@ -806,9 +830,13 @@ def _finalize(
 
 
 def _finalize_frame(
-    rgba: np.ndarray, background: BackgroundSettings, resolved_mode: str
+    rgba: np.ndarray, background: BackgroundSettings, resolved_mode: str,
+    *, protection: np.ndarray | None = None,
 ) -> np.ndarray:
     """Shared finishing path for selected-frame preview and full export."""
+    if protection is not None and protection.shape != rgba.shape[:2]:
+        raise PipelineError("Protection mask size differs from the frame being finalized.")
+    protected_rgba = rgba[protection].copy() if protection is not None else None
     if background.force_white_removal:
         from midnight_upscale.white_background import force_remove_white_edges
 
@@ -836,6 +864,11 @@ def _finalize_frame(
                 rgba, width=background.border_width, color=background.border_color,
                 smooth_depth=background.border_smooth_depth,
             )
+    if protection is not None and protected_rgba is not None:
+        if rgba.shape[:2] != protection.shape:
+            pad = (rgba.shape[0] - protection.shape[0]) // 2
+            protection = np.pad(protection, pad)
+        rgba[protection] = protected_rgba
     return rgba
 
 
@@ -880,7 +913,8 @@ def preview_one_frame(
     middle = np.asarray(decode_single_frame(info, count // 2)) if count > 1 else first
     original = np.asarray(decode_single_frame(info, index)).copy()
     resolved = resolve_background(
-        settings.background, has_alpha=info.has_alpha, sample_frames=[first, middle]
+        settings.background, has_alpha=info.has_alpha, sample_frames=[first, middle],
+        source_path=info.path,
     )
     remover = open_remover(resolved)
     try:
@@ -889,7 +923,16 @@ def preview_one_frame(
             result = resize_rgba(
                 result, target_size(result.shape[1], result.shape[0], settings.resize)
             )
-        result = _finalize_frame(result, settings.background, resolved.mode)
+        protection = load_painted_mask(resolved.protection_mask) if resolved.protection_mask else None
+        if protection is not None and settings.resize.active:
+            protection = np.asarray(
+                Image.fromarray(protection.astype(np.uint8) * 255, "L").resize(
+                    (result.shape[1], result.shape[0]), Image.Resampling.NEAREST
+                )
+            ) > 0
+        result = _finalize_frame(
+            result, settings.background, resolved.mode, protection=protection
+        )
     finally:
         if remover is not None:
             remover.close()

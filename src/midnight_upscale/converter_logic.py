@@ -23,6 +23,7 @@ from midnight_upscale.background import MODE_LABELS, BackgroundSettings
 from midnight_upscale.batch_bundle import create_batch_zip
 from midnight_upscale.chroma import EDGE_CLEANUP_LEVELS, ChromaSettings, parse_hex_color
 from midnight_upscale.mask_temporal import TEMPORAL_LABELS
+from midnight_upscale.manual_key import parse_color_ranges, save_painted_mask
 from midnight_upscale.progress import (
     JobCancelled,
     PipelineProgressEvent,
@@ -157,6 +158,9 @@ def settings_from_form(
     border_color: str = "#000000",
     smooth_border: bool = False,
     border_smooth_depth: int = 1,
+    manual_colors: str = "",
+    protect_editor: object = None,
+    protect_source: str = "",
     key_color: str,
     tolerance: float,
     softness: float,
@@ -201,6 +205,7 @@ def settings_from_form(
         edge_cleanup=edge_cleanup if edge_cleanup in EDGE_CLEANUP_LEVELS else "Light",
         hard_mask=bool(hard_mask),
     )
+    drawn_mode = MODE_LABELS.get(background_mode, "auto") in {"drawn_white", "drawn_white_tight"}
     background = BackgroundSettings(
         mode=MODE_LABELS.get(background_mode, "auto"),
         comics_fade_strength=float(comics_fade_strength) / 100.0,
@@ -212,6 +217,12 @@ def settings_from_form(
         border_width=int(border_width),
         border_color=parse_hex_color(border_color or "#000000"),
         border_smooth_depth=int(border_smooth_depth) if smooth_border else 0,
+        manual_colors=parse_color_ranges(manual_colors) if drawn_mode else (),
+        protection_mask=(
+            save_painted_mask(protect_editor, Path("work") / "_manual_masks")
+            if drawn_mode else ""
+        ),
+        protection_source=str(protect_source or "") if drawn_mode else "",
         chroma=chroma,
         sample_key_color=bool(sample_key),
         ai_backend=ai_backend or DEFAULT_BACKEND,

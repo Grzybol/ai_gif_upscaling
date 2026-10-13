@@ -7,6 +7,7 @@ resolved to, so the choice is never silent.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -25,6 +26,9 @@ from midnight_upscale.segmentation import (
     BackgroundRemoverUnavailable,
     ai_available,
     create_remover,
+)
+from midnight_upscale.manual_key import (
+    ColorRange, load_painted_mask, remove_selected_colors, restore_protected_pixels,
 )
 from midnight_upscale.utils import PipelineError
 from midnight_upscale.white_background import remove_exact_white_background, remove_white_background
@@ -62,6 +66,9 @@ class BackgroundSettings:
     border_width: int = 1
     border_color: tuple[int, int, int] = (0, 0, 0)
     border_smooth_depth: int = 0
+    manual_colors: tuple[ColorRange, ...] = ()
+    protection_mask: str = ""
+    protection_source: str = ""
     chroma: ChromaSettings = field(default_factory=ChromaSettings)
     # Manual Chroma Key: read the key color from the frame border instead of the picker.
     sample_key_color: bool = False
@@ -77,6 +84,8 @@ class ResolvedBackground:
     chroma: ChromaSettings | None = None
     ai_backend: str = DEFAULT_BACKEND
     ai_model: str = DEFAULT_MODEL
+    manual_colors: tuple[ColorRange, ...] = ()
+    protection_mask: str = ""
 
     @property
     def needs_ai(self) -> bool:
@@ -88,6 +97,7 @@ def resolve_background(
     *,
     has_alpha: bool,
     sample_frames: list[np.ndarray],
+    source_path: Path | None = None,
 ) -> ResolvedBackground:
     """Decide the mode. ``sample_frames`` are RGB(A) arrays used to look for a green screen."""
 
@@ -119,6 +129,8 @@ def resolve_background(
             RESOLVED_DRAWN_WHITE,
             "DRAWN/COMICS + WHITE BACKGROUND",
             "Only exact RGB #FFFFFF is keyed, then a subtle 1 px inner outline is applied.",
+            manual_colors=settings.manual_colors,
+            protection_mask=_mask_for_source(settings, source_path),
         )
 
     if mode == "drawn_white_tight":
@@ -126,6 +138,8 @@ def resolve_background(
             RESOLVED_DRAWN_WHITE_TIGHT,
             "DRAWN/COMICS + WHITE BACKGROUND (CLEAN EDGE)",
             "White is removed; the contaminated outer pixel is trimmed and recolored from inside.",
+            manual_colors=settings.manual_colors,
+            protection_mask=_mask_for_source(settings, source_path),
         )
 
     if mode == "ai":
@@ -164,6 +178,15 @@ def _ai(settings: BackgroundSettings, label: str, reason: str) -> ResolvedBackgr
     )
 
 
+def _mask_for_source(settings: BackgroundSettings, source_path: Path | None) -> str:
+    if not settings.protection_mask:
+        return ""
+    if settings.protection_source and source_path is not None:
+        if Path(settings.protection_source).resolve() != source_path.resolve():
+            return ""
+    return settings.protection_mask
+
+
 def _with_key(chroma: ChromaSettings, color: tuple[int, int, int]) -> ChromaSettings:
     return ChromaSettings(
         key_color=color,
@@ -200,10 +223,10 @@ def remove_background(
         assert resolved.chroma is not None
         keyed = chroma_key(rgba[..., :3], resolved.chroma)
     elif resolved.mode == RESOLVED_DRAWN_WHITE:
-        return remove_exact_white_background(rgba)
+        keyed = remove_exact_white_background(rgba)
     elif resolved.mode in {RESOLVED_WHITE, RESOLVED_DRAWN_WHITE_TIGHT}:
         # This function multiplies the source alpha itself.
-        return remove_white_background(rgba)
+        keyed = remove_white_background(rgba)
     elif resolved.mode == RESOLVED_AI:
         if remover is None:
             raise PipelineError("AI segmentation needs a loaded model")
@@ -218,6 +241,11 @@ def remove_background(
         keyed[..., 3] = mask
     else:  # pragma: no cover - guarded by resolve_background
         raise PipelineError(f"Unknown resolved mode {resolved.mode!r}")
+    if resolved.mode in {RESOLVED_DRAWN_WHITE, RESOLVED_DRAWN_WHITE_TIGHT}:
+        keyed = remove_selected_colors(keyed, rgba, resolved.manual_colors)
+        protection = load_painted_mask(resolved.protection_mask) if resolved.protection_mask else None
+        keyed = restore_protected_pixels(keyed, rgba, protection)
+        return keyed
     if np.any(source_alpha < 255):
         scaled = keyed[..., 3].astype(np.uint16) * source_alpha.astype(np.uint16)
         keyed[..., 3] = ((scaled + 127) // 255).astype(np.uint8)

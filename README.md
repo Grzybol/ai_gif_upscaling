@@ -258,7 +258,15 @@ through a lossy format.
   Drawn/comics + white background removes only exact RGB `#FFFFFF` from decoded
   frames, then darkens the one-pixel inner edge after resizing. Lossy video
   compression can turn white background pixels off-white, leaving them visible
-  in this exact-match mode. Its optional
+  in this exact-match mode. The drawn/comics panel provides a pipette on the
+  original and zoomed previews, plus optional one-line-per-rule colors:
+  `#FDFDFD` (exact), `#F8F8F8..#FFFFFF` (inclusive per-channel RGB range), or
+  `#FAFAFA +/- 3` (per-channel tolerance). A protection brush locks painted
+  source-frame pixels against background removal, forced white removal, and
+  finishing effects. The same fixed-position mask is used on every frame of
+  the first selected video; it does not follow a moving feature or carry over
+  to other videos in a batch. Load a source frame into the brush, paint, then
+  press Preview or Convert. Its optional
   edge transparency gradient has strength and inward depth controls (0% is off);
   any background mode can optionally force near-white edge pixels to transparent
   using a depth (pixels) and a darkest white shade (0–255) threshold. In None
